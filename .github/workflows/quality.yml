@@ -35,8 +35,6 @@ jobs:
           path: target/site/jacoco
 
       - name: SonarQube analysis
-        if: ${{ secrets.SONAR_TOKEN != '' }}
-        run: >-
-          mvn -B sonar:sonar
-          -Dsonar.token=${{ secrets.SONAR_TOKEN }}
-          -Dsonar.qualitygate.wait=true
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: mvn -B sonar:sonar -Dsonar.qualitygate.wait=true
