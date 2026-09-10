@@ -3,9 +3,9 @@ name: Attendance quality
 on:
   workflow_dispatch:
   push:
-    branches: [develop, main]
+    branches: [main]
   pull_request:
-    branches: [develop, main]
+    branches: [main]
 
 permissions:
   contents: read
