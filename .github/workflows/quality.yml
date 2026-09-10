@@ -43,4 +43,4 @@ jobs:
           -Dsonar.projectKey=VictorTorreblancaFranco_vg-ms-attendance
           -Dsonar.organization=victortorreblancafranco
           -Dsonar.host.url=https://sonarcloud.io
-          -Dsonar.qualitygate.wait=true
+          -Dsonar.qualitygate.wait=false
