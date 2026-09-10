@@ -35,11 +35,8 @@ jobs:
           path: target/site/jacoco
 
       - name: SonarQube analysis
-        if: ${{ secrets.SONAR_HOST_URL != '' && secrets.SONAR_TOKEN != '' && secrets.SONAR_PROJECT_KEY != '' && secrets.SONAR_ORGANIZATION != '' }}
+        if: ${{ secrets.SONAR_TOKEN != '' }}
         run: >-
           mvn -B sonar:sonar
-          -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }}
           -Dsonar.token=${{ secrets.SONAR_TOKEN }}
-          -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
-          -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
           -Dsonar.qualitygate.wait=true
