@@ -3,6 +3,8 @@ package com.vg.attendance.domain.service;
 import com.vg.attendance.domain.exception.BusinessException;
 import com.vg.attendance.domain.model.Attendance;
 import com.vg.attendance.domain.service.impl.AttendanceDomainServiceImpl;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.api.Test;
 import reactor.test.StepVerifier;
 
@@ -65,10 +67,15 @@ class AttendanceDomainServiceImplTest {
             .verify();
     }
 
-    @Test
-    void calculateLateMinutesReturnsOnlyPositiveDelay() {
-        assertThat(service.calculateLateMinutes(LocalTime.of(8, 15), LocalTime.of(8, 0))).isEqualTo(15);
-        assertThat(service.calculateLateMinutes(LocalTime.of(7, 55), LocalTime.of(8, 0))).isZero();
-        assertThat(service.calculateLateMinutes(null, LocalTime.of(8, 0))).isZero();
+    @ParameterizedTest(name = "arrival={0}, start={1} -> {2} late minutes")
+    @CsvSource({
+        "08:15, 08:00, 15",
+        "07:55, 08:00, 0",
+        "08:00, 08:00, 0"
+    })
+    void calculateLateMinutesEvaluatesDifferentArrivalScenarios(
+            LocalTime arrivalTime, LocalTime classStartTime, int expectedMinutes) {
+        assertThat(service.calculateLateMinutes(arrivalTime, classStartTime))
+            .isEqualTo(expectedMinutes);
     }
 }
