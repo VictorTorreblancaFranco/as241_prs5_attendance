@@ -43,7 +43,6 @@ public class ScheduleClient {
         log.info("Obteniendo clases de hoy para el profesor: {}", teacherId);
         return scheduleWebClient.get()
                 .uri("/schedules/today/teacher/{teacherId}", teacherId)
-                .header("Authorization", authHeader)
                 .header("X-Internal-Request", "gateway")
                 .retrieve()
                 .bodyToFlux(ScheduleResponse.class)
@@ -57,7 +56,6 @@ public class ScheduleClient {
         log.info("Obteniendo todas las clases del profesor: {}", teacherId);
         return scheduleWebClient.get()
                 .uri("/schedules/teacher/{teacherId}", teacherId)
-                .header("Authorization", authHeader)
                 .header("X-Internal-Request", "gateway")
                 .retrieve()
                 .bodyToFlux(ScheduleResponse.class)

@@ -65,9 +65,14 @@ public class UserClient {
 
     public Mono<UserResponse> getUserById(String userId, String token) {
         log.info("Obteniendo usuario con token: {}", userId);
-        return userWebClient.get()
-                .uri("/api/users/{id}", userId)
-                .header("Authorization", "Bearer " + token)
+        WebClient.RequestHeadersSpec<?> spec = userWebClient.get()
+                .uri("/api/users/{id}", userId);
+        // El Authorization es opcional: sin token, la llamada se autentica con
+        // los headers de confianza interna (X-Internal-Request) del WebClient.
+        if (token != null && !token.isBlank()) {
+            spec = spec.header("Authorization", "Bearer " + token);
+        }
+        return spec
                 .exchangeToMono(response -> {
                     if (response.statusCode().equals(HttpStatus.NOT_FOUND)) {
                         return Mono.empty();

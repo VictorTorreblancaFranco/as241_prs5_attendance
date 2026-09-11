@@ -26,10 +26,9 @@ public class GatewayTrustWebFilter implements WebFilter {
                     null,
                     List.of(new SimpleGrantedAuthority("ROLE_" + (role != null ? role : "GATEWAY")))
             );
-            ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
-                    .headers(headers -> headers.remove("Authorization"))
-                    .build();
-            return chain.filter(exchange.mutate().request(mutatedRequest).build())
+            // NO se elimina el Authorization: el controlador lo necesita para
+            // reenviar el token a schedule/enrollment (llamadas río abajo).
+            return chain.filter(exchange)
                     .contextWrite(ReactiveSecurityContextHolder.withAuthentication(authentication));
         }
         return chain.filter(exchange);

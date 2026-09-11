@@ -150,9 +150,11 @@ public class AttendanceController {
             @PathVariable Long sectionId,
             @RequestParam Long yearId,
             @RequestParam(defaultValue = "200") int limit,
-            @RequestHeader(HttpHeaders.AUTHORIZATION) String authHeader) {
-        
-        String token = authHeader.substring(7);
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader) {
+
+        // El token es opcional: las llamadas río abajo se autentican con los
+        // headers de confianza interna (X-Internal-Request/X-User-Role).
+        String token = extractToken(authHeader);
         log.info("Obteniendo alumnos para grado: {}, sección: {}, año: {}", gradeId, sectionId, yearId);
         return enrollmentClient.getStudentsByGradeSectionYear(gradeId, sectionId, yearId, token)
                 .filter(student -> student.getIsActive() == null || Boolean.TRUE.equals(student.getIsActive()))
