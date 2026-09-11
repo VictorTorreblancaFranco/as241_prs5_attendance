@@ -136,7 +136,12 @@ public class AttendanceApplicationService implements
         return attendanceRepository.findByFecha(fecha)
             .map(this::toResponse);
     }
-    
+
+    @Override
+    public Flux<com.vg.attendance.application.port.in.dto.DailyActivityCount> getDailyActivity(LocalDate since) {
+        return attendanceRepository.countDailySince(since);
+    }
+
     @Override
     public Flux<AttendanceResponse> getAttendanceByDateRange(String estudianteId, LocalDate startDate, LocalDate endDate) {
         if (startDate.isAfter(endDate)) {

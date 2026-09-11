@@ -26,9 +26,15 @@ public class GatewayTrustWebFilter implements WebFilter {
                     null,
                     List.of(new SimpleGrantedAuthority("ROLE_" + (role != null ? role : "GATEWAY")))
             );
-            // NO se elimina el Authorization: el controlador lo necesita para
-            // reenviar el token a schedule/enrollment (llamadas río abajo).
-            return chain.filter(exchange)
+            // Igual que vg-ms-schedule: al confiar en la identidad resuelta por
+            // el gateway se elimina el Authorization entrante para que el
+            // resource server no intente validar un token ajeno (Firebase u
+            // otro issuer) y termine en 401. Las llamadas MS→MS reenvían el
+            // token con WebClients propios (headers internos spoofeados).
+            ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
+                    .headers(headers -> headers.remove("Authorization"))
+                    .build();
+            return chain.filter(exchange.mutate().request(mutatedRequest).build())
                     .contextWrite(ReactiveSecurityContextHolder.withAuthentication(authentication));
         }
         return chain.filter(exchange);
