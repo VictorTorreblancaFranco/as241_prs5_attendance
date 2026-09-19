@@ -336,6 +336,11 @@ class AttendanceApplicationServiceTest {
         }
 
         @Override
+        public Flux<com.vg.attendance.application.port.in.dto.DailyActivityCount> countDailySince(LocalDate since) {
+            return Flux.empty();
+        }
+
+        @Override
         public Flux<Attendance> findRecentAttendanceByStudent(String estudianteId) {
             return findByEstudianteId(estudianteId).take(30);
         }

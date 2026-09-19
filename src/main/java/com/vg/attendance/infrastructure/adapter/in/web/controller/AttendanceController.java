@@ -13,6 +13,7 @@ import com.vg.attendance.domain.exception.ConflictException;
 import com.vg.attendance.domain.exception.ForbiddenException;
 import com.vg.attendance.infrastructure.adapter.in.web.dto.AttendanceBulkItemRequest;
 import com.vg.attendance.infrastructure.adapter.in.web.dto.AttendanceBulkRequest;
+import com.vg.attendance.infrastructure.adapter.in.web.dto.AttendanceDailyStatsResponse;
 import com.vg.attendance.infrastructure.adapter.in.web.dto.AttendancePendingStudentResponse;
 import com.vg.attendance.infrastructure.adapter.in.web.dto.AttendanceRequest;
 import com.vg.attendance.infrastructure.adapter.in.web.dto.AttendanceStudentSummaryResponse;
@@ -74,7 +75,7 @@ public class AttendanceController {
     @ResponseStatus(HttpStatus.CREATED)
     public Mono<AttendanceResponse> registerAttendance(
             @Valid @RequestBody AttendanceRequest request,
-            @RequestHeader(HttpHeaders.AUTHORIZATION) String authHeader,
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             @RequestHeader("X-User-Id") String userIdFromGateway,
             @RequestHeader(value = "X-User-Role", required = false) String roleFromGateway) {
         
@@ -100,7 +101,7 @@ public class AttendanceController {
     public Flux<AttendanceResponse> registerClassAttendanceBulk(
             @PathVariable String claseId,
             @Valid @RequestBody AttendanceBulkRequest request,
-            @RequestHeader(HttpHeaders.AUTHORIZATION) String authHeader,
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             @RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         validateAttendanceMutationAccess(request.getProfesorId(), userId, role);
@@ -125,7 +126,7 @@ public class AttendanceController {
     @GetMapping("/teacher/{teacherId}/today")
     public Flux<ScheduleResponse> getTeacherTodayClasses(
             @PathVariable String teacherId,
-            @RequestHeader(HttpHeaders.AUTHORIZATION) String authHeader,
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             @RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         log.info("Obteniendo clases de hoy para profesor: {}", teacherId);
@@ -136,7 +137,7 @@ public class AttendanceController {
     @GetMapping("/teacher/{teacherId}/schedule")
     public Flux<ScheduleResponse> getTeacherSchedule(
             @PathVariable String teacherId,
-            @RequestHeader(HttpHeaders.AUTHORIZATION) String authHeader,
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             @RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         log.info("Obteniendo horario completo del profesor: {}", teacherId);
@@ -150,9 +151,11 @@ public class AttendanceController {
             @PathVariable Long sectionId,
             @RequestParam Long yearId,
             @RequestParam(defaultValue = "200") int limit,
-            @RequestHeader(HttpHeaders.AUTHORIZATION) String authHeader) {
-        
-        String token = authHeader.substring(7);
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader) {
+
+        // El token es opcional: las llamadas río abajo se autentican con los
+        // headers de confianza interna (X-Internal-Request/X-User-Role).
+        String token = extractToken(authHeader);
         log.info("Obteniendo alumnos para grado: {}, sección: {}, año: {}", gradeId, sectionId, yearId);
         return enrollmentClient.getStudentsByGradeSectionYear(gradeId, sectionId, yearId, token)
                 .filter(student -> student.getIsActive() == null || Boolean.TRUE.equals(student.getIsActive()))
@@ -225,7 +228,7 @@ public class AttendanceController {
             @PathVariable String claseId,
             @RequestParam String profesorId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
-            @RequestHeader(HttpHeaders.AUTHORIZATION) String authHeader,
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             @RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         validateTeacherAccess(profesorId, userId, role);
@@ -265,6 +268,45 @@ public class AttendanceController {
                 .flatMapMany(attendances -> enrichAttendances(attendances, token));
     }
 
+    /** KPI del dashboard: agregado del día sin datos personales (sin filtro por rol). */
+    @GetMapping("/stats/today")
+    public Mono<AttendanceDailyStatsResponse> getTodayStats() {        LocalDate today = LocalDate.now(SCHOOL_ZONE);
+        return getUseCase.getAttendanceByDate(today)
+                .collectList()
+                .map(attendances -> {
+                    int total = attendances.size();
+                    int present = (int) attendances.stream().filter(a -> "A".equals(a.getEstado())).count();
+                    int late = (int) attendances.stream().filter(a -> "T".equals(a.getEstado())).count();
+                    int absent = (int) attendances.stream().filter(a -> "F".equals(a.getEstado())).count();
+                    int justified = (int) attendances.stream().filter(a -> "J".equals(a.getEstado())).count();
+                    double punctuality = (present + late) > 0
+                            ? Math.round((present * 10000.0) / (present + late)) / 100.0
+                            : 0.0;
+                    double attendanceRate = total > 0
+                            ? Math.round(((present + late) * 10000.0) / total) / 100.0
+                            : 0.0;
+                    return AttendanceDailyStatsResponse.builder()
+                            .fecha(today)
+                            .total(total)
+                            .present(present)
+                            .late(late)
+                            .absent(absent)
+                            .justified(justified)
+                            .punctualityRate(punctuality)
+                            .attendanceRate(attendanceRate)
+                            .build();
+                });
+    }
+
+    /** KPI del dashboard: registros de asistencia por día (actividad histórica). */
+    @GetMapping("/stats/activity")
+    public Flux<com.vg.attendance.application.port.in.dto.DailyActivityCount> getActivityStats(
+            @RequestParam(defaultValue = "84") int days) {
+        int safeDays = Math.max(7, Math.min(days, 365));
+        LocalDate since = LocalDate.now(SCHOOL_ZONE).minusDays(safeDays);
+        return getUseCase.getDailyActivity(since);
+    }
+
     @GetMapping("/student/{estudianteId}/summary")
     public Mono<AttendanceStudentSummaryResponse> getStudentAttendanceSummary(
             @PathVariable String estudianteId,
@@ -302,7 +344,7 @@ public class AttendanceController {
     public Mono<AttendanceResponse> updateAttendance(
             @PathVariable Long id,
             @Valid @RequestBody AttendanceUpdateRequest request,
-            @RequestHeader(HttpHeaders.AUTHORIZATION) String authHeader,
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             @RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         String token = extractToken(authHeader);
@@ -929,11 +971,7 @@ public class AttendanceController {
     }
 
     private Mono<String> resolveUserName(String userId, String token) {
-        Mono<UserResponse> request = token == null || token.isBlank()
-                ? userClient.getUserById(userId)
-                : userClient.getUserById(userId, token);
-
-        return request
+        return userClient.getUserById(userId)
                 .map(this::formatUserName)
                 .filter(name -> !name.isBlank());
     }

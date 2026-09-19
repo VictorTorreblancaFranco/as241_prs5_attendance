@@ -27,7 +27,8 @@ public class AcademicClient {
 
     public Mono<CourseResponse> getCourseById(Long id) {
         return academicWebClient.get()
-                .uri("/api/academic/courses/{id}", id)
+                .uri("/api/course/courses/{id}", id)
+                .header("X-Internal-Request", "gateway")
                 .retrieve()
                 .bodyToMono(CourseResponse.class)
                 .timeout(requestTimeout)

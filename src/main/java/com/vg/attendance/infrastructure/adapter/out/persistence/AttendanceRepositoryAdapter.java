@@ -3,6 +3,7 @@ package com.vg.attendance.infrastructure.adapter.out.persistence;
 import com.vg.attendance.application.port.out.AttendanceRepositoryPort;
 import com.vg.attendance.domain.model.Attendance;
 import lombok.RequiredArgsConstructor;
+import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -14,6 +15,7 @@ import java.time.LocalDate;
 public class AttendanceRepositoryAdapter implements AttendanceRepositoryPort {
     
     private final AttendanceR2dbcRepository repository;
+    private final DatabaseClient databaseClient;
     
     @Override
     public Mono<Attendance> save(Attendance attendance) {
@@ -53,6 +55,17 @@ public class AttendanceRepositoryAdapter implements AttendanceRepositoryPort {
     @Override
     public Flux<Attendance> findByFecha(LocalDate fecha) {
         return repository.findByFecha(fecha);
+    }
+
+    @Override
+    public Flux<com.vg.attendance.application.port.in.dto.DailyActivityCount> countDailySince(java.time.LocalDate since) {
+        return databaseClient.sql(
+                "SELECT fecha, COUNT(*) AS total FROM asistencias WHERE fecha >= :since GROUP BY fecha ORDER BY fecha")
+                .bind("since", since)
+                .map((row, meta) -> new com.vg.attendance.application.port.in.dto.DailyActivityCount(
+                        row.get("fecha", LocalDate.class),
+                        row.get("total", Long.class) == null ? 0L : row.get("total", Long.class)))
+                .all();
     }
 
     @Override
