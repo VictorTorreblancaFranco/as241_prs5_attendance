@@ -8,6 +8,7 @@ import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
+import reactor.util.context.Context;
 
 import java.util.List;
 
@@ -15,6 +16,9 @@ public class GatewayTrustWebFilter implements WebFilter {
 
     private static final String INTERNAL_HEADER = "X-Internal-Request";
     private static final String INTERNAL_HEADER_VALUE = "gateway";
+    public static final String TENANT_CONTEXT_KEY = "attendance.tenantId";
+    public static final String USER_ID_CONTEXT_KEY = "attendance.userId";
+    public static final String USER_ROLE_CONTEXT_KEY = "attendance.userRole";
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
@@ -35,8 +39,30 @@ public class GatewayTrustWebFilter implements WebFilter {
                     .headers(headers -> headers.remove("Authorization"))
                     .build();
             return chain.filter(exchange.mutate().request(mutatedRequest).build())
-                    .contextWrite(ReactiveSecurityContextHolder.withAuthentication(authentication));
+                    .contextWrite(context -> requestContext(context, exchange, userId, role, authentication));
         }
-        return chain.filter(exchange);
+        return chain.filter(exchange)
+                .contextWrite(context -> requestContext(context, exchange, null, null, null));
+    }
+
+    private Context requestContext(Context context,
+                                   ServerWebExchange exchange,
+                                   String userId,
+                                   String role,
+                                   UsernamePasswordAuthenticationToken authentication) {
+        Context updated = context;
+        String tenantId = exchange.getRequest().getHeaders().getFirst("X-Tenant-Id");
+        if (tenantId != null && !tenantId.isBlank()) {
+            updated = updated.put(TENANT_CONTEXT_KEY, tenantId);
+        }
+        if (userId != null && !userId.isBlank()) {
+            updated = updated.put(USER_ID_CONTEXT_KEY, userId);
+        }
+        if (role != null && !role.isBlank()) {
+            updated = updated.put(USER_ROLE_CONTEXT_KEY, role);
+        }
+        return authentication == null
+                ? updated
+                : updated.putAll(ReactiveSecurityContextHolder.withAuthentication(authentication));
     }
 }

@@ -21,13 +21,15 @@ import com.vg.attendance.infrastructure.adapter.in.web.dto.AttendanceSummaryResp
 import com.vg.attendance.infrastructure.adapter.in.web.dto.AttendanceUpdateRequest;
 import com.vg.attendance.infrastructure.adapter.in.web.mapper.AttendanceWebMapper;
 import com.vg.attendance.infrastructure.adapter.out.client.EnrollmentClient;
+import com.vg.attendance.infrastructure.adapter.out.client.AcademicClient;
 import com.vg.attendance.infrastructure.adapter.out.client.ScheduleClient;
+import com.vg.attendance.infrastructure.adapter.out.client.dto.AcademicYearResponse;
 import com.vg.attendance.infrastructure.adapter.out.client.UserClient;
 import com.vg.attendance.infrastructure.adapter.out.client.dto.EnrollmentResponse;
 import com.vg.attendance.infrastructure.adapter.out.client.dto.ScheduleResponse;
 import com.vg.attendance.infrastructure.adapter.out.client.dto.UserResponse;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -53,7 +55,6 @@ import java.util.Set;
 @Slf4j
 @RestController
 @RequestMapping("/api/attendance")
-@RequiredArgsConstructor
 public class AttendanceController {
 
     private static final ZoneId SCHOOL_ZONE = ZoneId.of("America/Lima");
@@ -67,9 +68,43 @@ public class AttendanceController {
     private final GetAttendanceAuditUseCase auditUseCase;
     private final UpdateAttendanceUseCase updateUseCase;
     private final AttendanceWebMapper mapper;
+    private final AcademicClient academicClient;
     private final ScheduleClient scheduleClient;
     private final EnrollmentClient enrollmentClient;
     private final UserClient userClient;
+
+    @Autowired
+    public AttendanceController(RegisterAttendanceUseCase registerUseCase,
+                                GetAttendanceUseCase getUseCase,
+                                GetAttendanceAuditUseCase auditUseCase,
+                                UpdateAttendanceUseCase updateUseCase,
+                                AttendanceWebMapper mapper,
+                                AcademicClient academicClient,
+                                ScheduleClient scheduleClient,
+                                EnrollmentClient enrollmentClient,
+                                UserClient userClient) {
+        this.registerUseCase = registerUseCase;
+        this.getUseCase = getUseCase;
+        this.auditUseCase = auditUseCase;
+        this.updateUseCase = updateUseCase;
+        this.mapper = mapper;
+        this.academicClient = academicClient;
+        this.scheduleClient = scheduleClient;
+        this.enrollmentClient = enrollmentClient;
+        this.userClient = userClient;
+    }
+
+    public AttendanceController(RegisterAttendanceUseCase registerUseCase,
+                                GetAttendanceUseCase getUseCase,
+                                GetAttendanceAuditUseCase auditUseCase,
+                                UpdateAttendanceUseCase updateUseCase,
+                                AttendanceWebMapper mapper,
+                                ScheduleClient scheduleClient,
+                                EnrollmentClient enrollmentClient,
+                                UserClient userClient) {
+        this(registerUseCase, getUseCase, auditUseCase, updateUseCase, mapper, null,
+                scheduleClient, enrollmentClient, userClient);
+    }
     
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -108,6 +143,7 @@ public class AttendanceController {
         String token = extractToken(authHeader);
 
         return findScheduleForClass(request.getProfesorId(), claseId, authHeader)
+            .flatMap(schedule -> validateAcademicYear(schedule, request.getAnioLectivo(), request.getFecha()).thenReturn(schedule))
             .flatMap(schedule -> validateClassDay(schedule, request.getFecha()).thenReturn(schedule))
             .flatMap(schedule -> validateRegistrationWindow(schedule, request.getFecha(), role).thenReturn(schedule))
             .flatMapMany(schedule -> enrollmentClient.getStudentsByGradeSectionYear(
@@ -740,6 +776,7 @@ public class AttendanceController {
                 .filter(schedule -> Objects.equals(schedule.getId(), classId))
                 .next()
                 .switchIfEmpty(Mono.error(new BusinessException("La clase no existe o no pertenece al profesor indicado")))
+                .flatMap(schedule -> validateAcademicYear(schedule, request.getAnioLectivo(), request.getFecha()).thenReturn(schedule))
                 .flatMap(schedule -> validateClassDay(schedule, request.getFecha()).thenReturn(schedule))
                 .flatMap(schedule -> validateRegistrationWindow(schedule, request.getFecha(), null).thenReturn(schedule))
                 .flatMap(schedule -> {
@@ -767,12 +804,40 @@ public class AttendanceController {
             return Mono.empty();
         }
 
-        int expectedDay = schedule.getDayOfWeek();
+        int expectedDay = schedule.getDayOfWeek().getValue();
         int actualDay = dayOfWeekValue(attendanceDate.getDayOfWeek());
         if (expectedDay != actualDay) {
             return Mono.error(new BusinessException("La clase no corresponde al día de la fecha indicada"));
         }
         return Mono.empty();
+    }
+
+    private Mono<Void> validateAcademicYear(ScheduleResponse schedule,
+                                            Integer requestedAcademicYearId,
+                                            LocalDate attendanceDate) {
+        if (schedule.getAcademicYearId() == null || requestedAcademicYearId == null
+                || !Objects.equals(schedule.getAcademicYearId(), requestedAcademicYearId.longValue())) {
+            return Mono.error(new BusinessException(
+                    "El año lectivo de la asistencia no coincide con el año lectivo de la clase"));
+        }
+        if (academicClient == null) {
+            return Mono.empty();
+        }
+
+        return academicClient.getAcademicYears()
+                .filter(year -> Objects.equals(year.getId(), requestedAcademicYearId))
+                .filter(year -> Boolean.TRUE.equals(year.getActive()))
+                .filter(year -> attendanceDate == null || isWithinAcademicYear(year, attendanceDate))
+                .next()
+                .switchIfEmpty(Mono.error(new BusinessException(
+                        "El año lectivo no está activo o no corresponde a la fecha indicada")))
+                .then();
+    }
+
+    private boolean isWithinAcademicYear(AcademicYearResponse year, LocalDate date) {
+        return year.getStartDate() != null && year.getEndDate() != null
+                && !date.isBefore(year.getStartDate())
+                && !date.isAfter(year.getEndDate());
     }
 
     private Mono<Void> validateRegistrationWindow(ScheduleResponse schedule, LocalDate attendanceDate, String role) {
