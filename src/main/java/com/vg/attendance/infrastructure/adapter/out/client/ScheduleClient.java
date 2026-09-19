@@ -17,6 +17,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.ZoneId;
 
 @Slf4j
 @Component
@@ -42,7 +44,11 @@ public class ScheduleClient {
     public Flux<ScheduleResponse> getTodayClassesByTeacher(String teacherId, String authHeader) {
         log.info("Obteniendo clases de hoy para el profesor: {}", teacherId);
         return scheduleWebClient.get()
-                .uri("/schedules/today/teacher/{teacherId}", teacherId)
+                .uri(uriBuilder -> uriBuilder
+                        .path("/schedules/teacher/{teacherId}")
+                        .queryParam("dayOfWeek", LocalDate.now(ZoneId.of("America/Lima")).getDayOfWeek())
+                        .queryParam("active", true)
+                        .build(teacherId))
                 .header("X-Internal-Request", "gateway")
                 .retrieve()
                 .bodyToFlux(ScheduleResponse.class)

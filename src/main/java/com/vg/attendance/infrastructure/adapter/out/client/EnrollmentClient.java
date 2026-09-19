@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
+import reactor.util.context.ContextView;
 
 import java.time.Duration;
 import java.util.List;
@@ -24,6 +25,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Component
 public class EnrollmentClient {
+
+    private static final String TENANT_CONTEXT_KEY = "attendance.tenantId";
 
     private final WebClient enrollmentWebClient;
     private final CircuitBreaker circuitBreaker;
@@ -53,12 +56,17 @@ public class EnrollmentClient {
 
     public Flux<EnrollmentResponse> getStudentsByGradeSectionYear(Long gradeId, Long sectionId, Long yearId, String token) {
         log.info("Obteniendo alumnos para grado: {}, sección: {}, año: {}", gradeId, sectionId, yearId);
-        String key = rosterKey(gradeId, sectionId, yearId);
+        return Flux.deferContextual(context -> loadRoster(gradeId, sectionId, yearId, context));
+    }
+
+    private Flux<EnrollmentResponse> loadRoster(Long gradeId, Long sectionId, Long yearId, ContextView context) {
+        String tenantId = context.getOrDefault(TENANT_CONTEXT_KEY, "default");
+        String key = rosterKey(tenantId, gradeId, sectionId, yearId);
 
         RosterCacheEntry cached = rosterCache.get(key);
         if (cached != null && System.currentTimeMillis() - cached.storedAt() < ROSTER_TTL_MS) {
-            log.info("Roster servido desde caché para grado {}, sección {}, año {} ({} alumnos)",
-                    gradeId, sectionId, yearId, cached.students().size());
+            log.info("Roster servido desde caché para tenant {}, grado {}, sección {}, año {} ({} alumnos)",
+                    tenantId, gradeId, sectionId, yearId, cached.students().size());
             return Flux.fromIterable(cached.students());
         }
 
@@ -69,8 +77,8 @@ public class EnrollmentClient {
                 .collectList()
                 .doOnNext(students -> {
                     rosterCache.put(key, new RosterCacheEntry(List.copyOf(students), System.currentTimeMillis()));
-                    log.info("Roster cacheado para grado {}, sección {}, año {}: {} alumnos",
-                            gradeId, sectionId, yearId, students.size());
+                    log.info("Roster cacheado para tenant {}, grado {}, sección {}, año {}: {} alumnos",
+                            tenantId, gradeId, sectionId, yearId, students.size());
                 })
                 .flatMapMany(Flux::fromIterable)
                 .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
@@ -81,11 +89,11 @@ public class EnrollmentClient {
 
     /** Evicta el roster de un combo año/grado/sección (útil tras cambios de matrícula). */
     public void evictRoster(Long gradeId, Long sectionId, Long yearId) {
-        rosterCache.remove(rosterKey(gradeId, sectionId, yearId));
+        rosterCache.keySet().removeIf(key -> key.endsWith("|" + gradeId + "|" + sectionId + "|" + yearId));
     }
 
-    private String rosterKey(Long gradeId, Long sectionId, Long yearId) {
-        return gradeId + "|" + sectionId + "|" + yearId;
+    private String rosterKey(String tenantId, Long gradeId, Long sectionId, Long yearId) {
+        return tenantId + "|" + gradeId + "|" + sectionId + "|" + yearId;
     }
 
     private ServiceUnavailableException enrollmentUnavailable(Throwable error) {
