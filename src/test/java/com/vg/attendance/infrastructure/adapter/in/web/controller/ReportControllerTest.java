@@ -121,6 +121,11 @@ class ReportControllerTest {
         }
 
         @Override
+        public Flux<com.vg.attendance.application.port.in.dto.HourlyFlowCount> countHourlyToday(LocalDate fecha) {
+            return Flux.empty();
+        }
+
+        @Override
         public Flux<Attendance> findRecentAttendanceByStudent(String estudianteId) {
             return Flux.empty();
         }

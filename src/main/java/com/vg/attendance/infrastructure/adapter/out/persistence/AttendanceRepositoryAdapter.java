@@ -69,6 +69,23 @@ public class AttendanceRepositoryAdapter implements AttendanceRepositoryPort {
     }
 
     @Override
+    public Flux<com.vg.attendance.application.port.in.dto.HourlyFlowCount> countHourlyToday(java.time.LocalDate fecha) {
+        return databaseClient.sql(
+                "SELECT EXTRACT(HOUR FROM hora_llegada) AS hora, COUNT(*) AS total "
+                + "FROM asistencias WHERE fecha = :fecha AND hora_llegada IS NOT NULL "
+                + "GROUP BY EXTRACT(HOUR FROM hora_llegada) ORDER BY hora")
+                .bind("fecha", fecha)
+                .map((row, meta) -> {
+                    Object hora = row.get("hora");
+                    long h = ((Number) hora).longValue();
+                    return new com.vg.attendance.application.port.in.dto.HourlyFlowCount(
+                            (int) h,
+                            row.get("total", Long.class) == null ? 0L : row.get("total", Long.class));
+                })
+                .all();
+    }
+
+    @Override
     public Flux<Attendance> findRecentAttendanceByStudent(String estudianteId) {
         return repository.findTop30ByEstudianteIdOrderByFechaDesc(estudianteId);
     }

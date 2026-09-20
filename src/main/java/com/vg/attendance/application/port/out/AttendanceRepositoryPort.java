@@ -16,5 +16,6 @@ public interface AttendanceRepositoryPort {
     Mono<Long> countBySessionId(Long sessionId);
     Flux<Attendance> findByFecha(LocalDate fecha);
     Flux<com.vg.attendance.application.port.in.dto.DailyActivityCount> countDailySince(java.time.LocalDate since);
+    Flux<com.vg.attendance.application.port.in.dto.HourlyFlowCount> countHourlyToday(java.time.LocalDate fecha);
     Flux<Attendance> findRecentAttendanceByStudent(String estudianteId);
 }

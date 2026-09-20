@@ -343,6 +343,15 @@ public class AttendanceController {
         return getUseCase.getDailyActivity(since);
     }
 
+    /** KPI del dashboard: flujo de ingreso por hora de llegada del día. */
+    @GetMapping("/stats/hourly")
+    public Flux<com.vg.attendance.application.port.in.dto.HourlyFlowCount> getHourlyFlowStats(
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) {
+        LocalDate day = fecha != null ? fecha : LocalDate.now(SCHOOL_ZONE);
+        return getUseCase.getHourlyFlow(day);
+    }
+
     @GetMapping("/student/{estudianteId}/summary")
     public Mono<AttendanceStudentSummaryResponse> getStudentAttendanceSummary(
             @PathVariable String estudianteId,

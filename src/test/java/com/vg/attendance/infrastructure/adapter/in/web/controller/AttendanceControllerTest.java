@@ -213,6 +213,11 @@ class AttendanceControllerTest {
         }
 
         @Override
+        public Flux<com.vg.attendance.application.port.in.dto.HourlyFlowCount> getHourlyFlow(LocalDate fecha) {
+            return Flux.empty();
+        }
+
+        @Override
         public Flux<AttendanceResponse> getAttendanceByDateRange(String estudianteId, LocalDate startDate, LocalDate endDate) {
             return Flux.empty();
         }

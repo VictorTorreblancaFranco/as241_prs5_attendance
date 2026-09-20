@@ -12,5 +12,6 @@ public interface GetAttendanceUseCase {
     Flux<AttendanceResponse> getAttendanceByClass(String claseId, LocalDate fecha);
     Flux<AttendanceResponse> getAttendanceByDate(LocalDate fecha);
     Flux<com.vg.attendance.application.port.in.dto.DailyActivityCount> getDailyActivity(java.time.LocalDate since);
+    Flux<com.vg.attendance.application.port.in.dto.HourlyFlowCount> getHourlyFlow(java.time.LocalDate fecha);
     Flux<AttendanceResponse> getAttendanceByDateRange(String estudianteId, LocalDate startDate, LocalDate endDate);
 }

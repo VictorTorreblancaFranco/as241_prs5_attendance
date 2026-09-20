@@ -143,6 +143,11 @@ public class AttendanceApplicationService implements
     }
 
     @Override
+    public Flux<com.vg.attendance.application.port.in.dto.HourlyFlowCount> getHourlyFlow(LocalDate fecha) {
+        return attendanceRepository.countHourlyToday(fecha);
+    }
+
+    @Override
     public Flux<AttendanceResponse> getAttendanceByDateRange(String estudianteId, LocalDate startDate, LocalDate endDate) {
         if (startDate.isAfter(endDate)) {
             return Flux.error(new BusinessException("La fecha de inicio no puede ser posterior a la fecha de fin"));
