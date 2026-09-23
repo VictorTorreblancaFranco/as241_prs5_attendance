@@ -36,9 +36,15 @@ public class WebClientConfig {
     private static final String INTERNAL_REQUEST_HEADER = "X-Internal-Request";
     private static final String INTERNAL_REQUEST_VALUE = "gateway";
 
+    @Value("${attendance.internal-secret:}")
+    private String internalSecret;
+
     private ExchangeFilterFunction propagateRequestContext() {
         return (request, next) -> Mono.deferContextual(context -> {
             ClientRequest.Builder builder = ClientRequest.from(request);
+            if (internalSecret != null && !internalSecret.isBlank()) {
+                builder.header("X-Internal-Secret", internalSecret);
+            }
             replaceHeader(builder, "X-Tenant-Id", context, GatewayTrustWebFilter.TENANT_CONTEXT_KEY);
             replaceHeader(builder, "X-User-Id", context, GatewayTrustWebFilter.USER_ID_CONTEXT_KEY);
             replaceHeader(builder, "X-User-Role", context, GatewayTrustWebFilter.USER_ROLE_CONTEXT_KEY);

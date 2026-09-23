@@ -38,6 +38,7 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                 CREATE TABLE IF NOT EXISTS asistencias (
                     id BIGSERIAL PRIMARY KEY,
                     session_id BIGINT,
+                    institucion_id UUID,
                     estudiante_id VARCHAR(80) NOT NULL,
                     clase_id VARCHAR(80) NOT NULL,
                     profesor_id VARCHAR(80) NOT NULL,
@@ -61,6 +62,7 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
         return databaseClient.sql("""
                 CREATE TABLE IF NOT EXISTS asistencia_sesiones (
                     id BIGSERIAL PRIMARY KEY,
+                    institucion_id UUID,
                     clase_id VARCHAR(80) NOT NULL,
                     profesor_id VARCHAR(80) NOT NULL,
                     fecha DATE NOT NULL,
@@ -82,14 +84,23 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
     private Mono<Void> addSessionIdToAttendance() {
         return databaseClient.sql("""
                 ALTER TABLE asistencias
-                ADD COLUMN IF NOT EXISTS session_id BIGINT
+                ADD COLUMN IF NOT EXISTS session_id BIGINT;
                 """)
-                .then();
+                .then()
+                .then(databaseClient.sql("""
+                    ALTER TABLE asistencias
+                    ADD COLUMN IF NOT EXISTS institucion_id UUID
+                    """).then())
+                .then(databaseClient.sql("""
+                    ALTER TABLE asistencia_sesiones
+                    ADD COLUMN IF NOT EXISTS institucion_id UUID
+                    """).then());
     }
 
     private Mono<Void> backfillAttendanceSessions() {
         return databaseClient.sql("""
                 INSERT INTO asistencia_sesiones (
+                    institucion_id,
                     clase_id,
                     profesor_id,
                     fecha,
@@ -105,6 +116,7 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                     version
                 )
                 SELECT
+                    a.institucion_id,
                     a.clase_id,
                     MIN(a.profesor_id) AS profesor_id,
                     a.fecha,
@@ -120,8 +132,8 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                     0 AS version
                 FROM asistencias a
                 WHERE a.session_id IS NULL
-                GROUP BY a.clase_id, a.fecha
-                ON CONFLICT (clase_id, fecha) DO NOTHING
+                GROUP BY a.institucion_id, a.clase_id, a.fecha
+                ON CONFLICT (institucion_id, clase_id, fecha) DO NOTHING
                 """)
                 .then()
                 .then(databaseClient.sql("""
@@ -129,6 +141,7 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                         SET session_id = s.id
                         FROM asistencia_sesiones s
                         WHERE a.session_id IS NULL
+                          AND s.institucion_id IS NOT DISTINCT FROM a.institucion_id
                           AND s.clase_id = a.clase_id
                           AND s.fecha = a.fecha
                         """).then())
@@ -179,10 +192,13 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
 
     private Mono<Void> createDuplicateProtectionIndex() {
         return databaseClient.sql("""
-                CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencias_estudiante_clase_fecha
-                ON asistencias (estudiante_id, clase_id, fecha)
+                DROP INDEX IF EXISTS ux_asistencias_estudiante_clase_fecha
                 """)
                 .then()
+                .then(databaseClient.sql("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencias_tenant_estudiante_clase_fecha
+                    ON asistencias (institucion_id, estudiante_id, clase_id, fecha)
+                    """).then())
                 .onErrorResume(error -> {
                     log.warn("No se pudo crear indice unico de asistencias; revisa duplicados existentes: {}", error.getMessage());
                     return Mono.empty();
@@ -191,13 +207,24 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
 
     private Mono<Void> createSessionIndexes() {
         return databaseClient.sql("""
-                CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_sesiones_clase_fecha
-                ON asistencia_sesiones (clase_id, fecha)
+                DROP INDEX IF EXISTS ux_asistencia_sesiones_clase_fecha
                 """)
                 .then()
                 .then(databaseClient.sql("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_sesiones_tenant_clase_fecha
+                    ON asistencia_sesiones (institucion_id, clase_id, fecha)
+                    """).then())
+                .then(databaseClient.sql("""
                         CREATE INDEX IF NOT EXISTS ix_asistencias_session_id
                         ON asistencias (session_id)
+                        """).then())
+                .then(databaseClient.sql("""
+                        CREATE INDEX IF NOT EXISTS ix_asistencias_institucion_id
+                        ON asistencias (institucion_id)
+                        """).then())
+                .then(databaseClient.sql("""
+                        CREATE INDEX IF NOT EXISTS ix_asistencia_sesiones_institucion_id
+                        ON asistencia_sesiones (institucion_id)
                         """).then())
                 .onErrorResume(error -> {
                     log.warn("No se pudieron crear indices de sesiones de asistencia: {}", error.getMessage());

@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS asistencia_sesiones (
     id BIGSERIAL PRIMARY KEY,
+    institucion_id UUID,
     clase_id VARCHAR(80) NOT NULL,
     profesor_id VARCHAR(80) NOT NULL,
     fecha DATE NOT NULL,
@@ -18,13 +19,24 @@ CREATE TABLE IF NOT EXISTS asistencia_sesiones (
 ALTER TABLE asistencias
 ADD COLUMN IF NOT EXISTS session_id BIGINT;
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_sesiones_clase_fecha
-ON asistencia_sesiones (clase_id, fecha);
+ALTER TABLE asistencias
+ADD COLUMN IF NOT EXISTS institucion_id UUID;
+
+ALTER TABLE asistencia_sesiones
+ADD COLUMN IF NOT EXISTS institucion_id UUID;
+
+DROP INDEX IF EXISTS ux_asistencia_sesiones_clase_fecha;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_sesiones_tenant_clase_fecha
+ON asistencia_sesiones (institucion_id, clase_id, fecha);
 
 CREATE INDEX IF NOT EXISTS ix_asistencias_session_id
 ON asistencias (session_id);
 
+CREATE INDEX IF NOT EXISTS ix_asistencias_institucion_id
+ON asistencias (institucion_id);
+
 INSERT INTO asistencia_sesiones (
+    institucion_id,
     clase_id,
     profesor_id,
     fecha,
@@ -40,6 +52,7 @@ INSERT INTO asistencia_sesiones (
     version
 )
 SELECT
+    a.institucion_id,
     a.clase_id,
     MIN(a.profesor_id) AS profesor_id,
     a.fecha,
@@ -55,13 +68,14 @@ SELECT
     0 AS version
 FROM asistencias a
 WHERE a.session_id IS NULL
-GROUP BY a.clase_id, a.fecha
-ON CONFLICT (clase_id, fecha) DO NOTHING;
+GROUP BY a.institucion_id, a.clase_id, a.fecha
+ON CONFLICT (institucion_id, clase_id, fecha) DO NOTHING;
 
 UPDATE asistencias a
 SET session_id = s.id
 FROM asistencia_sesiones s
 WHERE a.session_id IS NULL
+  AND s.institucion_id IS NOT DISTINCT FROM a.institucion_id
   AND s.clase_id = a.clase_id
   AND s.fecha = a.fecha;
 

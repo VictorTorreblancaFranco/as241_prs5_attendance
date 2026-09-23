@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -22,5 +23,10 @@ public class AttendanceSessionRepositoryAdapter implements AttendanceSessionRepo
     @Override
     public Mono<AttendanceSession> findByClaseIdAndFecha(String claseId, LocalDate fecha) {
         return repository.findByClaseIdAndFecha(claseId, fecha);
+    }
+
+    @Override
+    public Mono<AttendanceSession> findByClaseIdAndFecha(String tenantId, String claseId, LocalDate fecha) {
+        return repository.findByClassAndDateAndTenant(claseId, fecha, UUID.fromString(tenantId));
     }
 }

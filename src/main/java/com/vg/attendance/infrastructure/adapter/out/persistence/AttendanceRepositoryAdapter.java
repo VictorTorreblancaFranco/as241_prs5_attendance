@@ -9,6 +9,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.LocalDate;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -88,5 +89,50 @@ public class AttendanceRepositoryAdapter implements AttendanceRepositoryPort {
     @Override
     public Flux<Attendance> findRecentAttendanceByStudent(String estudianteId) {
         return repository.findTop30ByEstudianteIdOrderByFechaDesc(estudianteId);
+    }
+
+    @Override
+    public Mono<Attendance> findById(String tenantId, Long id) {
+        return repository.findByIdAndTenant(id, UUID.fromString(tenantId));
+    }
+
+    @Override
+    public Flux<Attendance> findByEstudianteId(String tenantId, String estudianteId) {
+        return repository.findByStudentAndTenant(estudianteId, UUID.fromString(tenantId));
+    }
+
+    @Override
+    public Flux<Attendance> findByClaseIdAndFecha(String tenantId, String claseId, LocalDate fecha) {
+        return repository.findByClassAndDateAndTenant(claseId, fecha, UUID.fromString(tenantId));
+    }
+
+    @Override
+    public Flux<Attendance> findByEstudianteIdAndFechaBetween(String tenantId, String estudianteId, LocalDate startDate, LocalDate endDate) {
+        return repository.findByStudentAndRangeAndTenant(estudianteId, startDate, endDate, UUID.fromString(tenantId));
+    }
+
+    @Override
+    public Mono<Boolean> existsByEstudianteIdAndClaseIdAndFecha(String tenantId, String estudianteId, String claseId, LocalDate fecha) {
+        return repository.existsByStudentClassDateAndTenant(estudianteId, claseId, fecha, UUID.fromString(tenantId));
+    }
+
+    @Override
+    public Mono<Long> countBySessionId(String tenantId, Long sessionId) {
+        return repository.countBySessionAndTenant(sessionId, UUID.fromString(tenantId));
+    }
+
+    @Override
+    public Flux<Attendance> findByFecha(String tenantId, LocalDate fecha) {
+        return repository.findByDateAndTenant(fecha, UUID.fromString(tenantId));
+    }
+
+    @Override
+    public Flux<com.vg.attendance.application.port.in.dto.DailyActivityCount> countDailySince(String tenantId, LocalDate since) {
+        return databaseClient.sql("SELECT fecha, COUNT(*) AS total FROM asistencias WHERE fecha >= :since AND institucion_id = :tenantId GROUP BY fecha ORDER BY fecha")
+                .bind("since", since)
+                .bind("tenantId", UUID.fromString(tenantId))
+                .map((row, meta) -> new com.vg.attendance.application.port.in.dto.DailyActivityCount(
+                        row.get("fecha", LocalDate.class), row.get("total", Long.class) == null ? 0L : row.get("total", Long.class)))
+                .all();
     }
 }

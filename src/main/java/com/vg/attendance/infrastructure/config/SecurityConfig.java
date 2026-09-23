@@ -29,8 +29,9 @@ import org.springframework.security.web.server.SecurityWebFilterChain;
 public class SecurityConfig {
 
     @Bean
-    public GatewayTrustWebFilter gatewayTrustWebFilter() {
-        return new GatewayTrustWebFilter();
+    public GatewayTrustWebFilter gatewayTrustWebFilter(
+            @Value("${attendance.internal-secret:}") String internalSecret) {
+        return new GatewayTrustWebFilter(internalSecret);
     }
 
     @Bean

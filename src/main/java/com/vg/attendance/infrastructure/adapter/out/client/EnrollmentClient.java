@@ -18,6 +18,7 @@ import reactor.core.publisher.Flux;
 import reactor.util.context.ContextView;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -76,10 +77,19 @@ public class EnrollmentClient {
                 .bodyToFlux(EnrollmentResponse.class)
                 .collectList()
                 .doOnNext(students -> {
-                    rosterCache.put(key, new RosterCacheEntry(List.copyOf(students), System.currentTimeMillis()));
-                    log.info("Roster cacheado para tenant {}, grado {}, sección {}, año {}: {} alumnos",
-                            tenantId, gradeId, sectionId, yearId, students.size());
+                    if (!students.isEmpty()) {
+                        rosterCache.put(key, new RosterCacheEntry(List.copyOf(uniqueStudents(students)), System.currentTimeMillis()));
+                        log.info("Roster cacheado para tenant {}, grado {}, sección {}, año {}: {} alumnos",
+                                tenantId, gradeId, sectionId, yearId, students.size());
+                    } else {
+                        // No cachear un roster vacío: una matrícula creada después
+                        // debe ser visible sin esperar al TTL de la caché.
+                        rosterCache.remove(key);
+                        log.info("Roster vacío para tenant {}, grado {}, sección {}, año {}; no se cachea",
+                                tenantId, gradeId, sectionId, yearId);
+                    }
                 })
+                .map(this::uniqueStudents)
                 .flatMapMany(Flux::fromIterable)
                 .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
                 .transformDeferred(RetryOperator.of(retry))
@@ -94,6 +104,14 @@ public class EnrollmentClient {
 
     private String rosterKey(String tenantId, Long gradeId, Long sectionId, Long yearId) {
         return tenantId + "|" + gradeId + "|" + sectionId + "|" + yearId;
+    }
+
+    private List<EnrollmentResponse> uniqueStudents(List<EnrollmentResponse> students) {
+        Map<String, EnrollmentResponse> unique = new LinkedHashMap<>();
+        students.stream()
+                .filter(student -> student != null && student.getStudentId() != null)
+                .forEach(student -> unique.putIfAbsent(student.getStudentId(), student));
+        return List.copyOf(unique.values());
     }
 
     private ServiceUnavailableException enrollmentUnavailable(Throwable error) {

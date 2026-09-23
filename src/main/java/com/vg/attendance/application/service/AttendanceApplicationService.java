@@ -32,6 +32,7 @@ import reactor.core.publisher.Mono;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -45,6 +46,8 @@ public class AttendanceApplicationService implements
         GetAttendanceUseCase, 
         GetAttendanceAuditUseCase,
         UpdateAttendanceUseCase {
+
+    private static final ZoneId SCHOOL_ZONE = ZoneId.of("America/Lima");
     
     private final AttendanceRepositoryPort attendanceRepository;
     private final AttendanceAuditRepositoryPort auditRepository;
@@ -55,9 +58,15 @@ public class AttendanceApplicationService implements
     @Override
     public Mono<AttendanceResponse> registerAttendance(RegisterAttendanceCommand command) {
         log.info("Registering attendance for student: {} in class: {}", command.getEstudianteId(), command.getClaseId());
-        
-        return attendanceRepository.existsByEstudianteIdAndClaseIdAndFecha(
-                command.getEstudianteId(), command.getClaseId(), command.getFecha())
+
+        return Mono.deferContextual(context -> {
+            applyTenantFromContext(command, context);
+            Mono<Boolean> duplicate = command.getInstitucionId() == null
+                ? attendanceRepository.existsByEstudianteIdAndClaseIdAndFecha(
+                    command.getEstudianteId(), command.getClaseId(), command.getFecha())
+                : attendanceRepository.existsByEstudianteIdAndClaseIdAndFecha(
+                    command.getInstitucionId().toString(), command.getEstudianteId(), command.getClaseId(), command.getFecha());
+            return duplicate
             .flatMap(exists -> {
                 if (exists) {
                     return Mono.error(new ConflictException("Ya existe un registro de asistencia para este estudiante en esta clase en esta fecha"));
@@ -76,13 +85,18 @@ public class AttendanceApplicationService implements
             .onErrorMap(this::mapDuplicateError)
             .flatMap(saved -> notifyAttendance(saved).thenReturn(saved))
             .map(this::toResponse);
+        });
     }
     
     @Override
     public Mono<AttendanceResponse> updateAttendance(Long id, UpdateAttendanceCommand command) {
         log.info("Updating attendance: {}", id);
-        
-        return attendanceRepository.findById(id)
+        Mono<Attendance> existing = Mono.deferContextual(context -> {
+            String tenant = context.getOrDefault("attendance.tenantId", null);
+            return tenant == null ? attendanceRepository.findById(id) : attendanceRepository.findById(tenant, id);
+        });
+
+        return existing
             .switchIfEmpty(Mono.error(new NotFoundException("Asistencia no encontrada con id: " + id)))
             .flatMap(attendance -> {
                 Attendance previous = copy(attendance);
@@ -118,11 +132,23 @@ public class AttendanceApplicationService implements
             .switchIfEmpty(Mono.error(new NotFoundException("Asistencia no encontrada con id: " + id)))
             .map(this::toResponse);
     }
+
+    @Override
+    public Mono<AttendanceResponse> getAttendanceById(Long id, String tenantId) {
+        return attendanceRepository.findById(tenantId, id)
+            .switchIfEmpty(Mono.error(new NotFoundException("Asistencia no encontrada con id: " + id)))
+            .map(this::toResponse);
+    }
     
     @Override
     public Flux<AttendanceResponse> getAttendanceByStudent(String estudianteId) {
         return attendanceRepository.findByEstudianteId(estudianteId)
             .map(this::toResponse);
+    }
+
+    @Override
+    public Flux<AttendanceResponse> getAttendanceByStudent(String estudianteId, String tenantId) {
+        return attendanceRepository.findByEstudianteId(tenantId, estudianteId).map(this::toResponse);
     }
     
     @Override
@@ -132,14 +158,29 @@ public class AttendanceApplicationService implements
     }
 
     @Override
+    public Flux<AttendanceResponse> getAttendanceByClass(String claseId, LocalDate fecha, String tenantId) {
+        return attendanceRepository.findByClaseIdAndFecha(tenantId, claseId, fecha).map(this::toResponse);
+    }
+
+    @Override
     public Flux<AttendanceResponse> getAttendanceByDate(LocalDate fecha) {
         return attendanceRepository.findByFecha(fecha)
             .map(this::toResponse);
     }
 
     @Override
+    public Flux<AttendanceResponse> getAttendanceByDate(LocalDate fecha, String tenantId) {
+        return attendanceRepository.findByFecha(tenantId, fecha).map(this::toResponse);
+    }
+
+    @Override
     public Flux<com.vg.attendance.application.port.in.dto.DailyActivityCount> getDailyActivity(LocalDate since) {
         return attendanceRepository.countDailySince(since);
+    }
+
+    @Override
+    public Flux<com.vg.attendance.application.port.in.dto.DailyActivityCount> getDailyActivity(LocalDate since, String tenantId) {
+        return attendanceRepository.countDailySince(tenantId, since);
     }
 
     @Override
@@ -158,8 +199,25 @@ public class AttendanceApplicationService implements
     }
 
     @Override
+    public Flux<AttendanceResponse> getAttendanceByDateRange(String estudianteId, LocalDate startDate, LocalDate endDate, String tenantId) {
+        if (startDate.isAfter(endDate)) {
+            return Flux.error(new BusinessException("La fecha de inicio no puede ser posterior a la fecha de fin"));
+        }
+        return attendanceRepository.findByEstudianteIdAndFechaBetween(tenantId, estudianteId, startDate, endDate)
+            .map(this::toResponse);
+    }
+
+    @Override
     public Flux<AttendanceAuditResponse> getAuditByAttendanceId(Long attendanceId) {
         return attendanceRepository.findById(attendanceId)
+            .switchIfEmpty(Mono.error(new NotFoundException("Asistencia no encontrada con id: " + attendanceId)))
+            .thenMany(auditRepository.findByAttendanceId(attendanceId))
+            .map(this::toAuditResponse);
+    }
+
+    @Override
+    public Flux<AttendanceAuditResponse> getAuditByAttendanceId(Long attendanceId, String tenantId) {
+        return attendanceRepository.findById(tenantId, attendanceId)
             .switchIfEmpty(Mono.error(new NotFoundException("Asistencia no encontrada con id: " + attendanceId)))
             .thenMany(auditRepository.findByAttendanceId(attendanceId))
             .map(this::toAuditResponse);
@@ -218,7 +276,7 @@ public class AttendanceApplicationService implements
         if (fecha == null) {
             return Mono.error(new BusinessException("La fecha de asistencia es obligatoria"));
         }
-        if (fecha.isAfter(LocalDate.now())) {
+        if (fecha.isAfter(LocalDate.now(SCHOOL_ZONE))) {
             return Mono.error(new BusinessException("No se puede registrar asistencia en una fecha futura"));
         }
         return Mono.empty();
@@ -314,12 +372,7 @@ public class AttendanceApplicationService implements
             .changedAt(LocalDateTime.now())
             .build();
 
-        return auditRepository.save(audit)
-            .onErrorResume(error -> {
-                log.warn("No se pudo registrar auditoria de asistencia {}: {}", audit.getAttendanceId(), error.getMessage());
-                return Mono.empty();
-            })
-            .then();
+        return auditRepository.save(audit).then();
     }
 
     private Mono<Void> saveCreateAudit(Attendance attendance, RegisterAttendanceCommand command) {
@@ -340,12 +393,7 @@ public class AttendanceApplicationService implements
             .changedAt(LocalDateTime.now())
             .build();
 
-        return auditRepository.save(audit)
-            .onErrorResume(error -> {
-                log.warn("No se pudo registrar auditoria inicial de asistencia {}: {}", attendance.getId(), error.getMessage());
-                return Mono.empty();
-            })
-            .then();
+        return auditRepository.save(audit).then();
     }
 
     private String formatTime(LocalTime time) {
@@ -356,6 +404,7 @@ public class AttendanceApplicationService implements
         return Attendance.builder()
             .id(attendance.getId())
             .sessionId(attendance.getSessionId())
+            .institucionId(attendance.getInstitucionId())
             .estudianteId(attendance.getEstudianteId())
             .claseId(attendance.getClaseId())
             .profesorId(attendance.getProfesorId())
@@ -377,6 +426,7 @@ public class AttendanceApplicationService implements
         LocalDateTime now = LocalDateTime.now();
         return Attendance.builder()
             .sessionId(sessionId)
+            .institucionId(command.getInstitucionId())
             .estudianteId(command.getEstudianteId())
             .claseId(command.getClaseId())
             .profesorId(command.getProfesorId())
@@ -395,11 +445,15 @@ public class AttendanceApplicationService implements
     }
 
     private Mono<AttendanceSession> ensureSession(RegisterAttendanceCommand command) {
-        return sessionRepository.findByClaseIdAndFecha(command.getClaseId(), command.getFecha())
+        Mono<AttendanceSession> existing = command.getInstitucionId() == null
+            ? sessionRepository.findByClaseIdAndFecha(command.getClaseId(), command.getFecha())
+            : sessionRepository.findByClaseIdAndFecha(command.getInstitucionId().toString(), command.getClaseId(), command.getFecha());
+        return existing
             .flatMap(session -> applySessionTotal(session, command.getTotalEstudiantesSesion()))
             .switchIfEmpty(Mono.defer(() -> {
                 LocalDateTime now = LocalDateTime.now();
                 AttendanceSession session = AttendanceSession.builder()
+                    .institucionId(command.getInstitucionId())
                     .claseId(command.getClaseId())
                     .profesorId(command.getProfesorId())
                     .fecha(command.getFecha())
@@ -433,25 +487,43 @@ public class AttendanceApplicationService implements
             return Mono.empty();
         }
 
-        return sessionRepository.findByClaseIdAndFecha(attendance.getClaseId(), attendance.getFecha())
-            .flatMap(session -> attendanceRepository.countBySessionId(attendance.getSessionId())
-                .flatMap(count -> {
-                    int savedRecords = Math.toIntExact(count);
-                    session.setRegistrosGuardados(savedRecords);
-                    if (session.getTotalEstudiantes() != null && savedRecords >= session.getTotalEstudiantes()) {
-                        session.setEstado("SUBMITTED");
-                        session.setEnviadoPor(attendance.getRegistradoPor());
-                        session.setEnviadoEn(LocalDateTime.now());
+        Mono<AttendanceSession> session = attendance.getInstitucionId() == null
+            ? sessionRepository.findByClaseIdAndFecha(attendance.getClaseId(), attendance.getFecha())
+            : sessionRepository.findByClaseIdAndFecha(attendance.getInstitucionId().toString(), attendance.getClaseId(), attendance.getFecha());
+        Mono<Long> countMono = attendance.getInstitucionId() == null
+            ? attendanceRepository.countBySessionId(attendance.getSessionId())
+            : attendanceRepository.countBySessionId(attendance.getInstitucionId().toString(), attendance.getSessionId());
+        return session.flatMap(foundSession -> countMono
+                .flatMap(recordCount -> {
+                    int savedRecords = Math.toIntExact(recordCount);
+                    foundSession.setRegistrosGuardados(savedRecords);
+                    if (foundSession.getTotalEstudiantes() != null && savedRecords >= foundSession.getTotalEstudiantes()) {
+                        foundSession.setEstado("SUBMITTED");
+                        foundSession.setEnviadoPor(attendance.getRegistradoPor());
+                        foundSession.setEnviadoEn(LocalDateTime.now());
                     } else {
-                        session.setEstado("DRAFT");
-                        session.setEnviadoPor(null);
-                        session.setEnviadoEn(null);
+                        foundSession.setEstado("DRAFT");
+                        foundSession.setEnviadoPor(null);
+                        foundSession.setEnviadoEn(null);
                     }
-                    session.setActualizadoEn(LocalDateTime.now());
-                    session.setVersion(session.getVersion() == null ? 1 : session.getVersion() + 1);
-                    return sessionRepository.save(session);
+                    foundSession.setActualizadoEn(LocalDateTime.now());
+                    foundSession.setVersion(foundSession.getVersion() == null ? 1 : foundSession.getVersion() + 1);
+                    return sessionRepository.save(foundSession);
                 }))
             .then();
+    }
+
+    private void applyTenantFromContext(RegisterAttendanceCommand command, reactor.util.context.ContextView context) {
+        if (command.getInstitucionId() == null) {
+            String tenant = context.getOrDefault("attendance.tenantId", null);
+            if (tenant != null && !tenant.isBlank()) {
+                try {
+                    command.setInstitucionId(java.util.UUID.fromString(tenant));
+                } catch (IllegalArgumentException ex) {
+                    throw new ForbiddenException("El tenant de la institución no es válido");
+                }
+            }
+        }
     }
 
     private Throwable mapDuplicateError(Throwable error) {

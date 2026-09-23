@@ -11,6 +11,7 @@ import org.springframework.data.relational.core.mapping.Table;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -23,6 +24,8 @@ public class Attendance {
     private Long id;
 
     private Long sessionId;
+
+    private UUID institucionId;
     
     private String estudianteId;
     private String claseId;

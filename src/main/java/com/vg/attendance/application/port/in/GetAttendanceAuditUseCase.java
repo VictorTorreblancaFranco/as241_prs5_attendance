@@ -5,4 +5,8 @@ import reactor.core.publisher.Flux;
 
 public interface GetAttendanceAuditUseCase {
     Flux<AttendanceAuditResponse> getAuditByAttendanceId(Long attendanceId);
+
+    default Flux<AttendanceAuditResponse> getAuditByAttendanceId(Long attendanceId, String tenantId) {
+        return getAuditByAttendanceId(attendanceId);
+    }
 }

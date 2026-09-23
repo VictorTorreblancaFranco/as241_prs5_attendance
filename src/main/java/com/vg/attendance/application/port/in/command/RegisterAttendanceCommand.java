@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -25,4 +26,5 @@ public class RegisterAttendanceCommand {
     private LocalTime horaLlegada;
     private String justificacionNota;
     private String justificacionFotoUrl;
+    private UUID institucionId;
 }

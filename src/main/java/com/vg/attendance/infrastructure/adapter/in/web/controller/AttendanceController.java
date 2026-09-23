@@ -34,6 +34,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
+import org.springframework.transaction.reactive.TransactionalOperator;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -72,6 +73,7 @@ public class AttendanceController {
     private final ScheduleClient scheduleClient;
     private final EnrollmentClient enrollmentClient;
     private final UserClient userClient;
+    private final TransactionalOperator transactionalOperator;
 
     @Autowired
     public AttendanceController(RegisterAttendanceUseCase registerUseCase,
@@ -82,7 +84,8 @@ public class AttendanceController {
                                 AcademicClient academicClient,
                                 ScheduleClient scheduleClient,
                                 EnrollmentClient enrollmentClient,
-                                UserClient userClient) {
+                                UserClient userClient,
+                                TransactionalOperator transactionalOperator) {
         this.registerUseCase = registerUseCase;
         this.getUseCase = getUseCase;
         this.auditUseCase = auditUseCase;
@@ -92,6 +95,7 @@ public class AttendanceController {
         this.scheduleClient = scheduleClient;
         this.enrollmentClient = enrollmentClient;
         this.userClient = userClient;
+        this.transactionalOperator = transactionalOperator;
     }
 
     public AttendanceController(RegisterAttendanceUseCase registerUseCase,
@@ -103,7 +107,7 @@ public class AttendanceController {
                                 EnrollmentClient enrollmentClient,
                                 UserClient userClient) {
         this(registerUseCase, getUseCase, auditUseCase, updateUseCase, mapper, null,
-                scheduleClient, enrollmentClient, userClient);
+                scheduleClient, enrollmentClient, userClient, null);
     }
     
     @PostMapping
@@ -187,7 +191,14 @@ public class AttendanceController {
             @PathVariable Long sectionId,
             @RequestParam Long yearId,
             @RequestParam(defaultValue = "200") int limit,
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader) {
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
+
+        String normalizedRole = normalizeRole(role);
+        if (!canManageAnyTeacher(role) && !"TEACHER".equals(normalizedRole)) {
+            return Flux.error(new ForbiddenException("Solo personal autorizado o docentes pueden consultar alumnos de una sección"));
+        }
 
         // El token es opcional: las llamadas río abajo se autentican con los
         // headers de confianza interna (X-Internal-Request/X-User-Role).
@@ -209,7 +220,7 @@ public class AttendanceController {
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
-        return getUseCase.getAttendanceById(id)
+        return attendanceById(id)
                 .flatMap(attendance -> validateAttendanceReadAccess(attendance, userId, role).thenReturn(attendance))
                 .flatMap(response -> enrichAttendance(response, extractToken(authHeader)));
     }
@@ -221,9 +232,9 @@ public class AttendanceController {
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         String token = extractToken(authHeader);
-        return getUseCase.getAttendanceById(id)
+        return attendanceById(id)
             .flatMapMany(attendance -> validateAttendanceAuditAccess(attendance, userId, role)
-                .thenMany(auditUseCase.getAuditByAttendanceId(id)))
+                .thenMany(auditByAttendanceId(id)))
             .collectList()
             .flatMapMany(audits -> enrichAuditUsers(audits, token));
     }
@@ -236,7 +247,7 @@ public class AttendanceController {
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         String token = extractToken(authHeader);
-        return getUseCase.getAttendanceByStudent(estudianteId)
+        return attendanceByStudent(estudianteId)
                 .filterWhen(attendance -> canReadAttendance(attendance, userId, role))
                 .take(validateLimit(limit))
                 .collectList()
@@ -252,7 +263,7 @@ public class AttendanceController {
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         String token = extractToken(authHeader);
-        return getUseCase.getAttendanceByClass(claseId, fecha)
+        return attendanceByClass(claseId, fecha)
                 .filterWhen(attendance -> canReadAttendance(attendance, userId, role))
                 .take(validateLimit(limit))
                 .collectList()
@@ -283,7 +294,7 @@ public class AttendanceController {
                     .filter(student -> Objects.equals(student.getSectionId(), schedule.getSectionId()))
                     .filter(student -> Objects.equals(student.getAcademicYearId(), schedule.getAcademicYearId()))
                     .collectList(),
-                getUseCase.getAttendanceByClass(claseId, fecha)
+                attendanceByClass(claseId, fecha)
                     .filterWhen(attendance -> canReadAttendance(attendance, userId, role))
                     .collectList()))
             .flatMap(tuple -> buildSummary(claseId, profesorId, fecha, tuple.getT1(), tuple.getT2(), token));
@@ -297,7 +308,7 @@ public class AttendanceController {
             @RequestHeader(value = "X-User-Id", required = false) String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         String token = extractToken(authHeader);
-        return getUseCase.getAttendanceByDate(fecha)
+        return attendanceByDate(fecha)
                 .filterWhen(attendance -> canReadAttendance(attendance, userId, role))
                 .take(validateLimit(limit))
                 .collectList()
@@ -307,7 +318,7 @@ public class AttendanceController {
     /** KPI del dashboard: agregado del día sin datos personales (sin filtro por rol). */
     @GetMapping("/stats/today")
     public Mono<AttendanceDailyStatsResponse> getTodayStats() {        LocalDate today = LocalDate.now(SCHOOL_ZONE);
-        return getUseCase.getAttendanceByDate(today)
+        return attendanceByDate(today)
                 .collectList()
                 .map(attendances -> {
                     int total = attendances.size();
@@ -340,7 +351,7 @@ public class AttendanceController {
             @RequestParam(defaultValue = "84") int days) {
         int safeDays = Math.max(7, Math.min(days, 365));
         LocalDate since = LocalDate.now(SCHOOL_ZONE).minusDays(safeDays);
-        return getUseCase.getDailyActivity(since);
+        return dailyActivity(since);
     }
 
     /** KPI del dashboard: flujo de ingreso por hora de llegada del día. */
@@ -363,7 +374,7 @@ public class AttendanceController {
         validateDateRange(startDate, endDate);
         String token = extractToken(authHeader);
         return validateStudentSummaryAccess(estudianteId, userId, role)
-            .then(getUseCase.getAttendanceByDateRange(estudianteId, startDate, endDate).collectList())
+            .then(attendanceByDateRange(estudianteId, startDate, endDate).collectList())
             .flatMap(attendances -> buildStudentSummary(estudianteId, startDate, endDate, attendances, token));
     }
     
@@ -378,7 +389,7 @@ public class AttendanceController {
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         validateDateRange(startDate, endDate);
         String token = extractToken(authHeader);
-        return getUseCase.getAttendanceByDateRange(estudianteId, startDate, endDate)
+        return attendanceByDateRange(estudianteId, startDate, endDate)
                 .filterWhen(attendance -> canReadAttendance(attendance, userId, role))
                 .take(validateLimit(limit))
                 .collectList()
@@ -393,7 +404,7 @@ public class AttendanceController {
             @RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         String token = extractToken(authHeader);
-        return getUseCase.getAttendanceById(id)
+        return attendanceById(id)
                 .doOnNext(attendance -> validateAttendanceMutationAccess(attendance, userId, role))
                 .doOnNext(attendance -> validateTeacherCorrectionRange(attendance, userId, role))
                 .flatMap(attendance -> validateLateArrivalForUpdate(attendance, request, authHeader).thenReturn(attendance))
@@ -418,7 +429,7 @@ public class AttendanceController {
         request.getAsistencias().forEach(item -> applyLateTolerance(schedule, item));
         validateBulkItems(request.getAsistencias());
 
-        return getUseCase.getAttendanceByClass(claseId, request.getFecha())
+        Flux<AttendanceResponse> bulkOperation = attendanceByClass(claseId, request.getFecha())
             .collectMap(AttendanceResponse::getEstudianteId)
             .flatMapMany(existing -> Flux.fromIterable(request.getAsistencias())
                 .flatMapSequential(
@@ -426,6 +437,9 @@ public class AttendanceController {
                     BULK_SAVE_CONCURRENCY)
                 .collectList()
                 .flatMapMany(savedAttendances -> enrichAttendances(savedAttendances, token)));
+        return transactionalOperator == null
+            ? bulkOperation
+            : bulkOperation.as(transactionalOperator::transactional);
     }
 
     /**
@@ -514,7 +528,7 @@ public class AttendanceController {
     }
 
     private Mono<AttendanceResponse> findExistingBulkAttendance(String claseId, LocalDate fecha, String estudianteId) {
-        return getUseCase.getAttendanceByClass(claseId, fecha)
+        return attendanceByClass(claseId, fecha)
             .filter(attendance -> estudianteId.equals(attendance.getEstudianteId()))
             .next();
     }
@@ -1071,6 +1085,64 @@ public class AttendanceController {
             return "Sin asignar";
         }
         return USER_NOT_SYNCHRONIZED;
+    }
+
+    private Mono<AttendanceResponse> attendanceById(Long id) {
+        return Mono.deferContextual(context -> {
+            String tenant = tenantFromContext(context);
+            return tenant == null ? getUseCase.getAttendanceById(id) : getUseCase.getAttendanceById(id, tenant);
+        });
+    }
+
+    private Flux<AttendanceResponse> attendanceByStudent(String studentId) {
+        return Flux.deferContextual(context -> {
+            String tenant = tenantFromContext(context);
+            return tenant == null ? getUseCase.getAttendanceByStudent(studentId) : getUseCase.getAttendanceByStudent(studentId, tenant);
+        });
+    }
+
+    private Flux<AttendanceResponse> attendanceByClass(String classId, LocalDate date) {
+        return Flux.deferContextual(context -> {
+            String tenant = tenantFromContext(context);
+            return tenant == null ? getUseCase.getAttendanceByClass(classId, date) : getUseCase.getAttendanceByClass(classId, date, tenant);
+        });
+    }
+
+    private Flux<AttendanceResponse> attendanceByDate(LocalDate date) {
+        return Flux.deferContextual(context -> {
+            String tenant = tenantFromContext(context);
+            return tenant == null ? getUseCase.getAttendanceByDate(date) : getUseCase.getAttendanceByDate(date, tenant);
+        });
+    }
+
+    private Flux<com.vg.attendance.application.port.in.dto.DailyActivityCount> dailyActivity(LocalDate since) {
+        return Flux.deferContextual(context -> {
+            String tenant = tenantFromContext(context);
+            return tenant == null ? getUseCase.getDailyActivity(since) : getUseCase.getDailyActivity(since, tenant);
+        });
+    }
+
+    private Flux<AttendanceResponse> attendanceByDateRange(String studentId, LocalDate start, LocalDate end) {
+        return Flux.deferContextual(context -> {
+            String tenant = tenantFromContext(context);
+            return tenant == null
+                ? getUseCase.getAttendanceByDateRange(studentId, start, end)
+                : getUseCase.getAttendanceByDateRange(studentId, start, end, tenant);
+        });
+    }
+
+    private Flux<AttendanceAuditResponse> auditByAttendanceId(Long attendanceId) {
+        return Flux.deferContextual(context -> {
+            String tenant = tenantFromContext(context);
+            return tenant == null
+                ? auditUseCase.getAuditByAttendanceId(attendanceId)
+                : auditUseCase.getAuditByAttendanceId(attendanceId, tenant);
+        });
+    }
+
+    private String tenantFromContext(reactor.util.context.ContextView context) {
+        String tenant = context.getOrDefault("attendance.tenantId", null);
+        return tenant == null || tenant.isBlank() ? null : tenant;
     }
 
 }

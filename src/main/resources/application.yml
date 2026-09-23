@@ -21,6 +21,13 @@ spring:
     type: caffeine
     caffeine:
       spec: expireAfterWrite=1h,maximumSize=100
+  codec:
+    max-in-memory-size: 10MB
+  webflux:
+    multipart:
+      max-in-memory-size: 256KB
+      max-disk-usage-per-part: 10MB
+      max-parts: 1
 
 logging:
   level:
@@ -56,6 +63,7 @@ management:
         enabled: false
 
 attendance:
+  internal-secret: ${ATTENDANCE_INTERNAL_SECRET:}
   clients:
     timeout: ${ATTENDANCE_CLIENT_TIMEOUT:5s}
   rate-limit:

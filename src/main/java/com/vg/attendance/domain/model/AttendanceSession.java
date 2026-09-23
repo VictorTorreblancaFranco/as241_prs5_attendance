@@ -9,6 +9,7 @@ import org.springframework.data.relational.core.mapping.Table;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -19,6 +20,8 @@ public class AttendanceSession {
 
     @Id
     private Long id;
+
+    private UUID institucionId;
 
     private String claseId;
     private String profesorId;

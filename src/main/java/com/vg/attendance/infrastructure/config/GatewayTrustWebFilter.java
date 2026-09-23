@@ -1,6 +1,8 @@
 package com.vg.attendance.infrastructure.config;
 
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.ReactiveSecurityContextHolder;
@@ -20,15 +22,28 @@ public class GatewayTrustWebFilter implements WebFilter {
     public static final String USER_ID_CONTEXT_KEY = "attendance.userId";
     public static final String USER_ROLE_CONTEXT_KEY = "attendance.userRole";
 
+    private final String internalSecret;
+
+    public GatewayTrustWebFilter(@Value("${attendance.internal-secret:}") String internalSecret) {
+        this.internalSecret = internalSecret == null ? "" : internalSecret.trim();
+    }
+
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         if (INTERNAL_HEADER_VALUE.equals(exchange.getRequest().getHeaders().getFirst(INTERNAL_HEADER))) {
             String userId = exchange.getRequest().getHeaders().getFirst("X-User-Id");
             String role = exchange.getRequest().getHeaders().getFirst("X-User-Role");
+            String tenantId = exchange.getRequest().getHeaders().getFirst("X-Tenant-Id");
+            String suppliedSecret = exchange.getRequest().getHeaders().getFirst("X-Internal-Secret");
+            if (isBlank(userId) || isBlank(role) || isBlank(tenantId)
+                    || (!internalSecret.isBlank() && !internalSecret.equals(suppliedSecret))) {
+                exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+                return exchange.getResponse().setComplete();
+            }
             var authentication = new UsernamePasswordAuthenticationToken(
-                    userId != null ? userId : "gateway",
+                    userId,
                     null,
-                    List.of(new SimpleGrantedAuthority("ROLE_" + (role != null ? role : "GATEWAY")))
+                    List.of(new SimpleGrantedAuthority(normalizeRole(role)))
             );
             // Igual que vg-ms-schedule: al confiar en la identidad resuelta por
             // el gateway se elimina el Authorization entrante para que el
@@ -64,5 +79,13 @@ public class GatewayTrustWebFilter implements WebFilter {
         return authentication == null
                 ? updated
                 : updated.putAll(ReactiveSecurityContextHolder.withAuthentication(authentication));
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private String normalizeRole(String role) {
+        return role.startsWith("ROLE_") ? role : "ROLE_" + role.toUpperCase(java.util.Locale.ROOT);
     }
 }

@@ -86,7 +86,7 @@ public class ReportController {
             @RequestHeader(value = "X-User-Role", required = false) String role) {
 
         log.info("Reporte por clase: {}, fecha: {}", classId, date);
-        return attendanceRepository.findByClaseIdAndFecha(classId, date)
+        return attendanceByClass(classId, date)
             .collectList()
             .flatMap(attendances -> filterReportAccess(attendances, userId, role))
             .flatMap(attendances -> {
@@ -121,7 +121,7 @@ public class ReportController {
             @RequestHeader(value = "X-User-Role", required = false) String role) {
 
         log.info("Reporte por estudiante: {} desde {} hasta {}", studentId, startDate, endDate);
-        return attendanceRepository.findByEstudianteIdAndFechaBetween(studentId, startDate, endDate)
+        return attendanceByStudentRange(studentId, startDate, endDate)
             .collectList()
             .flatMap(attendances -> filterReportAccess(attendances, userId, role))
             .flatMap(attendances -> {
@@ -152,7 +152,7 @@ public class ReportController {
             @RequestHeader(value = "X-User-Role", required = false) String role) {
 
         log.info("Reporte diario: {}", date);
-        return attendanceRepository.findByFecha(date)
+        return attendanceByDate(date)
             .collectList()
             .flatMap(attendances -> filterReportAccess(attendances, userId, role))
             .flatMap(attendances -> {
@@ -186,6 +186,33 @@ public class ReportController {
                 }
                 return Mono.just(allowed);
             });
+    }
+
+    private Flux<Attendance> attendanceByClass(String classId, LocalDate date) {
+        return Flux.deferContextual(context -> {
+            String tenant = context.getOrDefault("attendance.tenantId", null);
+            return tenant == null
+                ? attendanceRepository.findByClaseIdAndFecha(classId, date)
+                : attendanceRepository.findByClaseIdAndFecha(tenant, classId, date);
+        });
+    }
+
+    private Flux<Attendance> attendanceByStudentRange(String studentId, LocalDate startDate, LocalDate endDate) {
+        return Flux.deferContextual(context -> {
+            String tenant = context.getOrDefault("attendance.tenantId", null);
+            return tenant == null
+                ? attendanceRepository.findByEstudianteIdAndFechaBetween(studentId, startDate, endDate)
+                : attendanceRepository.findByEstudianteIdAndFechaBetween(tenant, studentId, startDate, endDate);
+        });
+    }
+
+    private Flux<Attendance> attendanceByDate(LocalDate date) {
+        return Flux.deferContextual(context -> {
+            String tenant = context.getOrDefault("attendance.tenantId", null);
+            return tenant == null
+                ? attendanceRepository.findByFecha(date)
+                : attendanceRepository.findByFecha(tenant, date);
+        });
     }
 
     private Mono<Boolean> canReadAttendance(Attendance attendance, String userId, String role) {
