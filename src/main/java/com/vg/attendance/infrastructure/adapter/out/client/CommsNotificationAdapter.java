@@ -30,14 +30,14 @@ public class CommsNotificationAdapter implements NotificationPort {
 
     @Override
     public Mono<Void> notifyAbsenceOrLate(Attendance attendance) {
-        String templateId = templateFor(attendance.getEstado());
-        if (templateId == null) {
+        String tipo = tipoFor(attendance.getEstado());
+        if (tipo == null) {
             return Mono.empty();
         }
 
         return userClient.getGuardiansByStudentId(attendance.getEstudianteId())
                 .next()
-                .flatMap(link -> buildRequest(attendance, link, templateId))
+                .flatMap(link -> buildRequest(attendance, link, tipo))
                 .flatMap(this::sendNotification)
                 .onErrorResume(error -> {
                     log.warn("No se pudo notificar asistencia a comms: {}", error.getMessage());
@@ -47,30 +47,39 @@ public class CommsNotificationAdapter implements NotificationPort {
 
     @Override
     public Mono<Void> notifyThreeFullAbsenceDays(String estudianteId, int absenceDays) {
-        return Mono.empty();
+        return userClient.getGuardiansByStudentId(estudianteId)
+                .next()
+                .flatMap(link -> {
+                    Map<String, Object> request = new LinkedHashMap<>();
+                    request.put("destinatarioId", link.getParentId());
+                    request.put("studentId", estudianteId);
+                    request.put("tipo", "falta_acumulada");
+                    request.put("mensaje", "Su hijo ha acumulado " + absenceDays + " faltas consecutivas.");
+                    request.put("canal", "ambos");
+                    request.put("prioridad", "alta");
+                    return sendNotification(request);
+                })
+                .onErrorResume(error -> {
+                    log.warn("No se pudo notificar falta acumulada a comms: {}", error.getMessage());
+                    return Mono.empty();
+                });
     }
 
     private Mono<Map<String, Object>> buildRequest(
             Attendance attendance,
             ParentStudentLinkResponse link,
-            String templateId
+            String tipo
     ) {
         return userClient.getUserById(attendance.getEstudianteId())
                 .defaultIfEmpty(UserResponse.builder().id(attendance.getEstudianteId()).build())
                 .map(student -> {
-                    Map<String, Object> variables = new LinkedHashMap<>();
-                    variables.put("alumno", fullName(student));
-                    variables.put("fecha", attendance.getFecha().toString());
-                    variables.put("curso", "Clase " + attendance.getClaseId());
-                    variables.put("justificacion", attendance.getJustificacionNota() == null
-                            ? ""
-                            : attendance.getJustificacionNota());
-
                     Map<String, Object> request = new LinkedHashMap<>();
                     request.put("destinatarioId", link.getParentId());
+                    request.put("studentId", attendance.getEstudianteId());
+                    request.put("tipo", tipo);
+                    request.put("mensaje", buildMensaje(attendance, student, tipo));
                     request.put("canal", "ambos");
-                    request.put("plantillaId", templateId);
-                    request.put("variables", variables);
+                    request.put("prioridad", "normal");
                     return request;
                 });
     }
@@ -86,16 +95,34 @@ public class CommsNotificationAdapter implements NotificationPort {
                 .then();
     }
 
-    private String templateFor(String status) {
+    private String tipoFor(String status) {
         if (status == null) {
             return null;
         }
 
         return switch (status.toUpperCase()) {
-            case "F" -> "TPL_001";
-            case "T" -> "TPL_002";
-            case "J" -> "TPL_003";
+            case "F" -> "falta";
+            case "T" -> "tardanza";
+            case "J" -> "falta_justificada";
             default -> null;
+        };
+    }
+
+    private String buildMensaje(Attendance attendance, UserResponse student, String tipo) {
+        String nombre = fullName(student);
+        String fecha = attendance.getFecha() != null ? attendance.getFecha().toString() : "";
+
+        return switch (tipo) {
+            case "falta" -> "Su hijo " + nombre + " falta hoy (" + fecha + ").";
+            case "tardanza" -> {
+                String hora = attendance.getHoraLlegada() != null ? attendance.getHoraLlegada().toString() : "";
+                yield "Su hijo " + nombre + " llega tarde hoy (" + fecha + " " + hora + ").";
+            }
+            case "falta_justificada" -> {
+                String nota = attendance.getJustificacionNota() != null ? attendance.getJustificacionNota() : "";
+                yield "Falta justificada de " + nombre + " (" + fecha + "): " + nota;
+            }
+            default -> "Notificación de asistencia de " + nombre + " (" + fecha + ").";
         };
     }
 
