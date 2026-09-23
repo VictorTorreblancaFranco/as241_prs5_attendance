@@ -13,6 +13,8 @@ import reactor.core.publisher.Mono;
 import reactor.util.context.Context;
 
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 public class GatewayTrustWebFilter implements WebFilter {
 
@@ -21,6 +23,8 @@ public class GatewayTrustWebFilter implements WebFilter {
     public static final String TENANT_CONTEXT_KEY = "attendance.tenantId";
     public static final String USER_ID_CONTEXT_KEY = "attendance.userId";
     public static final String USER_ROLE_CONTEXT_KEY = "attendance.userRole";
+    private static final Set<String> GLOBAL_ROLES = Set.of(
+            "ADMIN", "DEVELOPER", "DIRECTOR", "COORDINATOR", "COORDINADOR", "SECRETARY", "SECRETARIA");
 
     private final String internalSecret;
 
@@ -35,7 +39,9 @@ public class GatewayTrustWebFilter implements WebFilter {
             String role = exchange.getRequest().getHeaders().getFirst("X-User-Role");
             String tenantId = exchange.getRequest().getHeaders().getFirst("X-Tenant-Id");
             String suppliedSecret = exchange.getRequest().getHeaders().getFirst("X-Internal-Secret");
-            if (isBlank(userId) || isBlank(role) || isBlank(tenantId)
+            // El gateway omite X-Tenant-Id para roles globales (por ejemplo ADMIN).
+            // Para el resto de usuarios el tenant sigue siendo obligatorio.
+            if (isBlank(userId) || isBlank(role) || (isBlank(tenantId) && !isGlobalRole(role))
                     || (!internalSecret.isBlank() && !internalSecret.equals(suppliedSecret))) {
                 exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
                 return exchange.getResponse().setComplete();
@@ -83,6 +89,14 @@ public class GatewayTrustWebFilter implements WebFilter {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private boolean isGlobalRole(String role) {
+        String normalized = role == null ? "" : role.trim().toUpperCase(Locale.ROOT);
+        if (normalized.startsWith("ROLE_")) {
+            normalized = normalized.substring("ROLE_".length());
+        }
+        return GLOBAL_ROLES.contains(normalized);
     }
 
     private String normalizeRole(String role) {
