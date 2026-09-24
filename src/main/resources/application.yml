@@ -64,7 +64,9 @@ management:
 
 attendance:
   internal-secret: ${ATTENDANCE_INTERNAL_SECRET:}
-  tenant-required: ${ATTENDANCE_TENANT_REQUIRED:false}
+  # Las rutas de negocio deben estar aisladas por institución. Los roles
+  # globales pueden operar sin X-Tenant-Id cuando el gateway así lo autoriza.
+  tenant-required: ${ATTENDANCE_TENANT_REQUIRED:true}
   clients:
     timeout: ${ATTENDANCE_CLIENT_TIMEOUT:5s}
   rate-limit:

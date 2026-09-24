@@ -138,11 +138,32 @@ Instancias configuradas:
 scheduleService
 enrollmentService
 userService
+academicService
 ```
+
+## Aislamiento por institución
+
+Las rutas de negocio requieren `X-Tenant-Id` por defecto. El gateway debe
+resolver y reenviar ese encabezado para usuarios de una institución. Los roles
+globales autorizados pueden operar sin tenant explícito, según la política del
+gateway. Para desarrollo local puede desactivarse temporalmente con
+`ATTENDANCE_TENANT_REQUIRED=false`.
+
+Todas las consultas y escrituras que aceptan tenant filtran por
+`institucion_id`; nunca se debe enviar un tenant tomado directamente del cuerpo
+de la petición.
 
 ## Rendimiento
 
-El registro masivo de asistencia procesa los estudiantes con concurrencia controlada y resuelve nombres al final del lote. Esto reduce llamadas repetidas al servicio de usuarios y evita que cada registro del lote haga su propio enriquecimiento de forma individual.
+El registro masivo de asistencia valida todo el lote antes de escribir,
+mantiene una transacción reactiva, usa una clave de idempotencia opcional y
+actualiza los contadores de sesión al finalizar. Las consultas de estudiantes,
+clase y auditoría tienen índices compuestos por tenant. Si el cliente reintenta
+la misma operación, los índices únicos y la idempotencia evitan duplicados.
+
+El endpoint limita el lote a 1000 elementos. Para una carga mayor se deben
+partir los datos en operaciones independientes con claves de idempotencia
+distintas; así un reintento no obliga a repetir todo el lote anterior.
 
 ## Pruebas
 
