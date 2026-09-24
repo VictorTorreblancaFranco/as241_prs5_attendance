@@ -27,9 +27,12 @@ public class GatewayTrustWebFilter implements WebFilter {
             "ADMIN", "DEVELOPER", "DIRECTOR", "COORDINATOR", "COORDINADOR", "SECRETARY", "SECRETARIA");
 
     private final String internalSecret;
+    private final boolean tenantRequired;
 
-    public GatewayTrustWebFilter(@Value("${attendance.internal-secret:}") String internalSecret) {
+    public GatewayTrustWebFilter(@Value("${attendance.internal-secret:}") String internalSecret,
+                                 @Value("${attendance.tenant-required:false}") boolean tenantRequired) {
         this.internalSecret = internalSecret == null ? "" : internalSecret.trim();
+        this.tenantRequired = tenantRequired;
     }
 
     @Override
@@ -62,6 +65,11 @@ public class GatewayTrustWebFilter implements WebFilter {
             return chain.filter(exchange.mutate().request(mutatedRequest).build())
                     .contextWrite(context -> requestContext(context, exchange, userId, role, authentication));
         }
+        if (tenantRequired && isTenantRequiredPath(exchange.getRequest().getPath().value())
+                && isBlank(exchange.getRequest().getHeaders().getFirst("X-Tenant-Id"))) {
+            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+            return exchange.getResponse().setComplete();
+        }
         return chain.filter(exchange)
                 .contextWrite(context -> requestContext(context, exchange, null, null, null));
     }
@@ -89,6 +97,14 @@ public class GatewayTrustWebFilter implements WebFilter {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private boolean isTenantRequiredPath(String path) {
+        return path != null
+                && !path.startsWith("/actuator/")
+                && !path.startsWith("/v3/api-docs")
+                && !path.startsWith("/swagger-ui")
+                && !path.startsWith("/webjars/");
     }
 
     private boolean isGlobalRole(String role) {

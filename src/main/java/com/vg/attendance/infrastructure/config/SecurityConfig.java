@@ -30,8 +30,9 @@ public class SecurityConfig {
 
     @Bean
     public GatewayTrustWebFilter gatewayTrustWebFilter(
-            @Value("${attendance.internal-secret:}") String internalSecret) {
-        return new GatewayTrustWebFilter(internalSecret);
+            @Value("${attendance.internal-secret:}") String internalSecret,
+            @Value("${attendance.tenant-required:false}") boolean tenantRequired) {
+        return new GatewayTrustWebFilter(internalSecret, tenantRequired);
     }
 
     @Bean

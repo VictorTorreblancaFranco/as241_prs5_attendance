@@ -43,7 +43,12 @@ public class EnrollmentClient {
     // a caídas breves de ese servicio mientras el roster esté cacheado.
     private record RosterCacheEntry(List<EnrollmentResponse> students, long storedAt) {}
 
-    private static final long ROSTER_TTL_MS = 10 * 60 * 1000L; // 10 minutos
+    @Value("${attendance.roster-cache.ttl:5m}")
+    private Duration rosterTtl = Duration.ofMinutes(5);
+
+    @Value("${attendance.roster-cache.maximum-size:500}")
+    private int rosterMaximumSize = 500;
+
     private final Map<String, RosterCacheEntry> rosterCache = new ConcurrentHashMap<>();
 
     @Autowired
@@ -65,7 +70,8 @@ public class EnrollmentClient {
         String key = rosterKey(tenantId, gradeId, sectionId, yearId);
 
         RosterCacheEntry cached = rosterCache.get(key);
-        if (cached != null && System.currentTimeMillis() - cached.storedAt() < ROSTER_TTL_MS) {
+        long ttlMillis = Math.max(1L, rosterTtl.toMillis());
+        if (cached != null && System.currentTimeMillis() - cached.storedAt() < ttlMillis) {
             log.info("Roster servido desde caché para tenant {}, grado {}, sección {}, año {} ({} alumnos)",
                     tenantId, gradeId, sectionId, yearId, cached.students().size());
             return Flux.fromIterable(cached.students());
@@ -78,6 +84,12 @@ public class EnrollmentClient {
                 .collectList()
                 .doOnNext(students -> {
                     if (!students.isEmpty()) {
+                        if (rosterCache.size() >= Math.max(1, rosterMaximumSize)) {
+                            rosterCache.entrySet().stream()
+                                    .min(Map.Entry.comparingByValue(java.util.Comparator.comparingLong(RosterCacheEntry::storedAt)))
+                                    .map(Map.Entry::getKey)
+                                    .ifPresent(rosterCache::remove);
+                        }
                         rosterCache.put(key, new RosterCacheEntry(List.copyOf(uniqueStudents(students)), System.currentTimeMillis()));
                         log.info("Roster cacheado para tenant {}, grado {}, sección {}, año {}: {} alumnos",
                                 tenantId, gradeId, sectionId, yearId, students.size());

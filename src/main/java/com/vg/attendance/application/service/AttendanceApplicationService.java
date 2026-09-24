@@ -79,12 +79,29 @@ public class AttendanceApplicationService implements
                     .flatMap(domainService::validateAttendance)
                     .flatMap(attendanceRepository::save)
                     .flatMap(saved -> saveCreateAudit(saved, command)
-                        .then(updateSessionCounters(saved))
+                        .then(command.isSkipSessionCounterUpdate()
+                            ? Mono.empty()
+                            : updateSessionCounters(saved))
                         .thenReturn(saved));
             })
             .onErrorMap(this::mapDuplicateError)
             .flatMap(saved -> notifyAttendance(saved).thenReturn(saved))
             .map(this::toResponse);
+        });
+    }
+
+    @Override
+    public Mono<Void> refreshSessionCounters(String claseId, LocalDate fecha,
+                                              Integer totalEstudiantes, String actor) {
+        return Mono.deferContextual(context -> {
+            String tenant = context.getOrDefault("attendance.tenantId", null);
+            Mono<AttendanceSession> session = tenant == null
+                    ? sessionRepository.findByClaseIdAndFecha(claseId, fecha)
+                    : sessionRepository.findByClaseIdAndFecha(tenant, claseId, fecha);
+            return session
+                    .switchIfEmpty(Mono.error(new NotFoundException("Sesión de asistencia no encontrada")))
+                    .flatMap(found -> refreshSession(found, tenant, totalEstudiantes, actor))
+                    .then();
         });
     }
     
@@ -445,16 +462,29 @@ public class AttendanceApplicationService implements
     }
 
     private Mono<AttendanceSession> ensureSession(RegisterAttendanceCommand command) {
-        Mono<AttendanceSession> existing = command.getInstitucionId() == null
+        Mono<AttendanceSession> existingByKey = command.getIdempotencyKey() == null || command.getIdempotencyKey().isBlank()
+            ? Mono.empty()
+            : command.getInstitucionId() == null
+                ? sessionRepository.findByIdempotencyKey(command.getIdempotencyKey())
+                : sessionRepository.findByIdempotencyKey(command.getInstitucionId().toString(), command.getIdempotencyKey());
+        Mono<AttendanceSession> existingByClass = command.getInstitucionId() == null
             ? sessionRepository.findByClaseIdAndFecha(command.getClaseId(), command.getFecha())
             : sessionRepository.findByClaseIdAndFecha(command.getInstitucionId().toString(), command.getClaseId(), command.getFecha());
-        return existing
-            .flatMap(session -> applySessionTotal(session, command.getTotalEstudiantesSesion()))
+        return existingByKey.switchIfEmpty(existingByClass)
+            .flatMap(session -> {
+                if (!Objects.equals(session.getClaseId(), command.getClaseId())
+                        || !Objects.equals(session.getFecha(), command.getFecha())
+                        || !Objects.equals(session.getAnioLectivo(), command.getAnioLectivo())) {
+                    return Mono.error(new ConflictException("La clave de idempotencia ya fue usada para otra sesión"));
+                }
+                return applySessionTotal(session, command.getTotalEstudiantesSesion());
+            })
             .switchIfEmpty(Mono.defer(() -> {
                 LocalDateTime now = LocalDateTime.now();
                 AttendanceSession session = AttendanceSession.builder()
                     .institucionId(command.getInstitucionId())
                     .claseId(command.getClaseId())
+                    .idempotencyKey(command.getIdempotencyKey())
                     .profesorId(command.getProfesorId())
                     .fecha(command.getFecha())
                     .anioLectivo(command.getAnioLectivo())
@@ -490,27 +520,36 @@ public class AttendanceApplicationService implements
         Mono<AttendanceSession> session = attendance.getInstitucionId() == null
             ? sessionRepository.findByClaseIdAndFecha(attendance.getClaseId(), attendance.getFecha())
             : sessionRepository.findByClaseIdAndFecha(attendance.getInstitucionId().toString(), attendance.getClaseId(), attendance.getFecha());
-        Mono<Long> countMono = attendance.getInstitucionId() == null
-            ? attendanceRepository.countBySessionId(attendance.getSessionId())
-            : attendanceRepository.countBySessionId(attendance.getInstitucionId().toString(), attendance.getSessionId());
-        return session.flatMap(foundSession -> countMono
-                .flatMap(recordCount -> {
-                    int savedRecords = Math.toIntExact(recordCount);
-                    foundSession.setRegistrosGuardados(savedRecords);
-                    if (foundSession.getTotalEstudiantes() != null && savedRecords >= foundSession.getTotalEstudiantes()) {
-                        foundSession.setEstado("SUBMITTED");
-                        foundSession.setEnviadoPor(attendance.getRegistradoPor());
-                        foundSession.setEnviadoEn(LocalDateTime.now());
-                    } else {
-                        foundSession.setEstado("DRAFT");
-                        foundSession.setEnviadoPor(null);
-                        foundSession.setEnviadoEn(null);
-                    }
-                    foundSession.setActualizadoEn(LocalDateTime.now());
-                    foundSession.setVersion(foundSession.getVersion() == null ? 1 : foundSession.getVersion() + 1);
-                    return sessionRepository.save(foundSession);
-                }))
+        return session.flatMap(foundSession -> refreshSession(foundSession,
+                        attendance.getInstitucionId() == null ? null : attendance.getInstitucionId().toString(),
+                        foundSession.getTotalEstudiantes(), attendance.getRegistradoPor()))
             .then();
+    }
+
+    private Mono<AttendanceSession> refreshSession(AttendanceSession session, String tenant,
+                                                    Integer totalEstudiantes, String actor) {
+        Mono<Long> count = tenant == null
+                ? attendanceRepository.countBySessionId(session.getId())
+                : attendanceRepository.countBySessionId(tenant, session.getId());
+        return count.flatMap(recordCount -> {
+            int savedRecords = Math.toIntExact(recordCount);
+            if (totalEstudiantes != null && totalEstudiantes > 0) {
+                session.setTotalEstudiantes(totalEstudiantes);
+            }
+            session.setRegistrosGuardados(savedRecords);
+            if (session.getTotalEstudiantes() != null && savedRecords >= session.getTotalEstudiantes()) {
+                session.setEstado("SUBMITTED");
+                session.setEnviadoPor(actor);
+                session.setEnviadoEn(LocalDateTime.now(SCHOOL_ZONE));
+            } else {
+                session.setEstado("DRAFT");
+                session.setEnviadoPor(null);
+                session.setEnviadoEn(null);
+            }
+            session.setActualizadoEn(LocalDateTime.now(SCHOOL_ZONE));
+            session.setVersion(session.getVersion() == null ? 1 : session.getVersion() + 1);
+            return sessionRepository.save(session);
+        });
     }
 
     private void applyTenantFromContext(RegisterAttendanceCommand command, reactor.util.context.ContextView context) {

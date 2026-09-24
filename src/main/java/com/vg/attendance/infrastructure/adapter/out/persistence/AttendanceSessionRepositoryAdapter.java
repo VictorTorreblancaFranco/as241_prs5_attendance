@@ -29,4 +29,14 @@ public class AttendanceSessionRepositoryAdapter implements AttendanceSessionRepo
     public Mono<AttendanceSession> findByClaseIdAndFecha(String tenantId, String claseId, LocalDate fecha) {
         return repository.findByClassAndDateAndTenant(claseId, fecha, UUID.fromString(tenantId));
     }
+
+    @Override
+    public Mono<AttendanceSession> findByIdempotencyKey(String idempotencyKey) {
+        return repository.findByIdempotencyKey(idempotencyKey);
+    }
+
+    @Override
+    public Mono<AttendanceSession> findByIdempotencyKey(String tenantId, String idempotencyKey) {
+        return repository.findByIdempotencyKeyAndTenant(idempotencyKey, UUID.fromString(tenantId));
+    }
 }

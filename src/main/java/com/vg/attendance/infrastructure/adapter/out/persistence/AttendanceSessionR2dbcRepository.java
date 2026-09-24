@@ -12,6 +12,12 @@ import java.util.UUID;
 public interface AttendanceSessionR2dbcRepository extends R2dbcRepository<AttendanceSession, Long> {
     Mono<AttendanceSession> findByClaseIdAndFecha(String claseId, LocalDate fecha);
 
+    @org.springframework.data.r2dbc.repository.Query("SELECT * FROM asistencia_sesiones WHERE idempotency_key = :key ORDER BY id DESC LIMIT 1")
+    Mono<AttendanceSession> findByIdempotencyKey(String key);
+
     @org.springframework.data.r2dbc.repository.Query("SELECT * FROM asistencia_sesiones WHERE clase_id = :classId AND fecha = :date AND institucion_id = :tenantId")
     Mono<AttendanceSession> findByClassAndDateAndTenant(String classId, LocalDate date, UUID tenantId);
+
+    @org.springframework.data.r2dbc.repository.Query("SELECT * FROM asistencia_sesiones WHERE idempotency_key = :key AND institucion_id = :tenantId ORDER BY id DESC LIMIT 1")
+    Mono<AttendanceSession> findByIdempotencyKeyAndTenant(String key, UUID tenantId);
 }

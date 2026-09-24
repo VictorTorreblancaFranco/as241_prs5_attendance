@@ -25,9 +25,17 @@ ADD COLUMN IF NOT EXISTS institucion_id UUID;
 ALTER TABLE asistencia_sesiones
 ADD COLUMN IF NOT EXISTS institucion_id UUID;
 
+ALTER TABLE asistencia_sesiones
+ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(120);
+
 DROP INDEX IF EXISTS ux_asistencia_sesiones_clase_fecha;
-CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_sesiones_tenant_clase_fecha
-ON asistencia_sesiones (institucion_id, clase_id, fecha);
+DROP INDEX IF EXISTS ux_asistencia_sesiones_tenant_clase_fecha;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_sesiones_tenant_clase_fecha_anio
+ON asistencia_sesiones (institucion_id, clase_id, fecha, anio_lectivo);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_sesiones_tenant_idempotency_key
+ON asistencia_sesiones (institucion_id, idempotency_key)
+WHERE idempotency_key IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS ix_asistencias_session_id
 ON asistencias (session_id);
@@ -68,8 +76,8 @@ SELECT
     0 AS version
 FROM asistencias a
 WHERE a.session_id IS NULL
-GROUP BY a.institucion_id, a.clase_id, a.fecha
-ON CONFLICT (institucion_id, clase_id, fecha) DO NOTHING;
+GROUP BY a.institucion_id, a.clase_id, a.fecha, a.anio_lectivo
+ON CONFLICT (institucion_id, clase_id, fecha, anio_lectivo) DO NOTHING;
 
 UPDATE asistencias a
 SET session_id = s.id
@@ -77,7 +85,8 @@ FROM asistencia_sesiones s
 WHERE a.session_id IS NULL
   AND s.institucion_id IS NOT DISTINCT FROM a.institucion_id
   AND s.clase_id = a.clase_id
-  AND s.fecha = a.fecha;
+  AND s.fecha = a.fecha
+  AND s.anio_lectivo = a.anio_lectivo;
 
 DO $$
 BEGIN

@@ -116,7 +116,8 @@ public class AttendanceController {
             @Valid @RequestBody AttendanceRequest request,
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             @RequestHeader("X-User-Id") String userIdFromGateway,
-            @RequestHeader(value = "X-User-Role", required = false) String roleFromGateway) {
+            @RequestHeader(value = "X-User-Role", required = false) String roleFromGateway,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         
         log.info("Registrando asistencia - User from gateway: {}, role: {}", userIdFromGateway, roleFromGateway);
         
@@ -131,6 +132,7 @@ public class AttendanceController {
                 .then(Mono.defer(() -> {
                     RegisterAttendanceCommand command = mapper.toCommand(request);
                     command.setRegistradoPorRole(roleFromGateway);
+                    command.setIdempotencyKey(normalizeIdempotencyKey(idempotencyKey));
                     return registerUseCase.registerAttendance(command);
                 }))
                 .flatMap(response -> enrichAttendance(response, token));
@@ -142,9 +144,11 @@ public class AttendanceController {
             @Valid @RequestBody AttendanceBulkRequest request,
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             @RequestHeader("X-User-Id") String userId,
-            @RequestHeader(value = "X-User-Role", required = false) String role) {
+            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         validateAttendanceMutationAccess(request.getProfesorId(), userId, role);
         String token = extractToken(authHeader);
+        String operationKey = normalizeIdempotencyKey(idempotencyKey);
 
         return findScheduleForClass(request.getProfesorId(), claseId, authHeader)
             .flatMap(schedule -> validateAcademicYear(schedule, request.getAnioLectivo(), request.getFecha()).thenReturn(schedule))
@@ -160,7 +164,7 @@ public class AttendanceController {
                 .filter(student -> Objects.equals(student.getSectionId(), schedule.getSectionId()))
                 .filter(student -> Objects.equals(student.getAcademicYearId(), schedule.getAcademicYearId()))
                 .collectList()
-                .flatMapMany(students -> processBulkAttendance(claseId, request, authHeader, token, userId, role, schedule, students)));
+                .flatMapMany(students -> processBulkAttendance(claseId, request, authHeader, token, userId, role, schedule, students, operationKey)));
     }
     
     @GetMapping("/teacher/{teacherId}/today")
@@ -424,7 +428,8 @@ public class AttendanceController {
                                                            String userId,
                                                            String role,
                                                            ScheduleResponse schedule,
-                                                           List<EnrollmentResponse> students) {
+                                                           List<EnrollmentResponse> students,
+                                                           String idempotencyKey) {
         validateBulkStudents(request.getAsistencias(), students);
         request.getAsistencias().forEach(item -> applyLateTolerance(schedule, item));
         validateBulkItems(request.getAsistencias());
@@ -433,10 +438,12 @@ public class AttendanceController {
             .collectMap(AttendanceResponse::getEstudianteId)
             .flatMapMany(existing -> Flux.fromIterable(request.getAsistencias())
                 .flatMapSequential(
-                    item -> saveBulkItem(claseId, request, userId, role, existing.get(item.getEstudianteId()), item),
+                    item -> saveBulkItem(claseId, request, userId, role, existing.get(item.getEstudianteId()), item, idempotencyKey),
                     BULK_SAVE_CONCURRENCY)
                 .collectList()
-                .flatMapMany(savedAttendances -> enrichAttendances(savedAttendances, token)));
+                .flatMapMany(savedAttendances -> registerUseCase
+                    .refreshSessionCounters(claseId, request.getFecha(), students.size(), userId)
+                    .thenMany(enrichAttendances(savedAttendances, token))));
         return transactionalOperator == null
             ? bulkOperation
             : bulkOperation.as(transactionalOperator::transactional);
@@ -485,7 +492,8 @@ public class AttendanceController {
                                                   String userId,
                                                   String role,
                                                   AttendanceResponse existing,
-                                                  AttendanceBulkItemRequest item) {
+                                                  AttendanceBulkItemRequest item,
+                                                  String idempotencyKey) {
         if (existing == null) {
             RegisterAttendanceCommand command = RegisterAttendanceCommand.builder()
                 .estudianteId(item.getEstudianteId())
@@ -500,6 +508,8 @@ public class AttendanceController {
                 .justificacionNota(item.getJustificacionNota())
                 .justificacionFotoUrl(item.getJustificacionFotoUrl())
                 .totalEstudiantesSesion(request.getAsistencias().size())
+                .idempotencyKey(idempotencyKey)
+                .skipSessionCounterUpdate(true)
                 .build();
             return registerUseCase.registerAttendance(command)
                 .onErrorResume(ConflictException.class, conflict -> findExistingBulkAttendance(claseId, request.getFecha(), item.getEstudianteId())
@@ -582,6 +592,17 @@ public class AttendanceController {
         }
         String cleaned = value.trim();
         return cleaned.isEmpty() ? null : cleaned;
+    }
+
+    private String normalizeIdempotencyKey(String value) {
+        if (value == null || value.isBlank()) {
+            return java.util.UUID.randomUUID().toString();
+        }
+        String normalized = value.trim();
+        if (normalized.length() > 120) {
+            throw new BusinessException("Idempotency-Key no puede superar 120 caracteres");
+        }
+        return normalized;
     }
 
     private Mono<AttendanceSummaryResponse> buildSummary(String claseId,

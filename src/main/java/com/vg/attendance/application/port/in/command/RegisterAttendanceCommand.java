@@ -16,6 +16,7 @@ import java.util.UUID;
 public class RegisterAttendanceCommand {
     private String estudianteId;
     private String claseId;
+    private String idempotencyKey;
     private String profesorId;
     private String registradoPor;
     private String registradoPorRole;
@@ -27,4 +28,5 @@ public class RegisterAttendanceCommand {
     private String justificacionNota;
     private String justificacionFotoUrl;
     private UUID institucionId;
+    private boolean skipSessionCounterUpdate;
 }

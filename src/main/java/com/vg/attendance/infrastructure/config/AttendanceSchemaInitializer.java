@@ -16,7 +16,7 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
     private final DatabaseClient databaseClient;
 
     @Override
-    public void run(ApplicationArguments args) {
+    public void run(ApplicationArguments args) throws Exception {
         createAttendanceTable()
                 .then(createSessionTable())
                 .then(addSessionIdToAttendance())
@@ -26,11 +26,8 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                 .then(normalizeExistingAttendanceData())
                 .then(createDuplicateProtectionIndex())
                 .doOnSuccess(ignored -> log.info("Attendance schema checks completed"))
-                .onErrorResume(error -> {
-                    log.warn("Attendance schema checks completed with warning: {}", error.getMessage());
-                    return Mono.empty();
-                })
-                .subscribe();
+                // No se acepta tráfico con el esquema parcialmente actualizado.
+                .block();
     }
 
     private Mono<Void> createAttendanceTable() {
@@ -64,6 +61,7 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                     id BIGSERIAL PRIMARY KEY,
                     institucion_id UUID,
                     clase_id VARCHAR(80) NOT NULL,
+                    idempotency_key VARCHAR(120),
                     profesor_id VARCHAR(80) NOT NULL,
                     fecha DATE NOT NULL,
                     anio_lectivo INTEGER NOT NULL,
@@ -90,6 +88,10 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                 .then(databaseClient.sql("""
                     ALTER TABLE asistencias
                     ADD COLUMN IF NOT EXISTS institucion_id UUID
+                    """).then())
+                .then(databaseClient.sql("""
+                    ALTER TABLE asistencia_sesiones
+                    ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(120)
                     """).then())
                 .then(databaseClient.sql("""
                     ALTER TABLE asistencia_sesiones
@@ -132,8 +134,8 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                     0 AS version
                 FROM asistencias a
                 WHERE a.session_id IS NULL
-                GROUP BY a.institucion_id, a.clase_id, a.fecha
-                ON CONFLICT (institucion_id, clase_id, fecha) DO NOTHING
+                GROUP BY a.institucion_id, a.clase_id, a.fecha, a.anio_lectivo
+                ON CONFLICT (institucion_id, clase_id, fecha, anio_lectivo) DO NOTHING
                 """)
                 .then()
                 .then(databaseClient.sql("""
@@ -144,11 +146,9 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                           AND s.institucion_id IS NOT DISTINCT FROM a.institucion_id
                           AND s.clase_id = a.clase_id
                           AND s.fecha = a.fecha
+                          AND s.anio_lectivo = a.anio_lectivo
                         """).then())
-                .onErrorResume(error -> {
-                    log.warn("Se omitio la regularizacion historica de sesiones de asistencia: {}", error.getMessage());
-                    return Mono.empty();
-                });
+                ;
     }
 
     private Mono<Void> createAuditTable() {
@@ -196,13 +196,13 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                 """)
                 .then()
                 .then(databaseClient.sql("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencias_tenant_estudiante_clase_fecha
-                    ON asistencias (institucion_id, estudiante_id, clase_id, fecha)
+                    DROP INDEX IF EXISTS ux_asistencias_tenant_estudiante_clase_fecha
                     """).then())
-                .onErrorResume(error -> {
-                    log.warn("No se pudo crear indice unico de asistencias; revisa duplicados existentes: {}", error.getMessage());
-                    return Mono.empty();
-                });
+                .then(databaseClient.sql("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencias_tenant_estudiante_clase_fecha_anio
+                    ON asistencias (institucion_id, estudiante_id, clase_id, fecha, anio_lectivo)
+                    """).then())
+                ;
     }
 
     private Mono<Void> createSessionIndexes() {
@@ -211,8 +211,16 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                 """)
                 .then()
                 .then(databaseClient.sql("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_sesiones_tenant_clase_fecha
-                    ON asistencia_sesiones (institucion_id, clase_id, fecha)
+                    DROP INDEX IF EXISTS ux_asistencia_sesiones_tenant_clase_fecha
+                    """).then())
+                .then(databaseClient.sql("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_sesiones_tenant_clase_fecha_anio
+                    ON asistencia_sesiones (institucion_id, clase_id, fecha, anio_lectivo)
+                    """).then())
+                .then(databaseClient.sql("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_asistencia_sesiones_tenant_idempotency_key
+                    ON asistencia_sesiones (institucion_id, idempotency_key)
+                    WHERE idempotency_key IS NOT NULL
                     """).then())
                 .then(databaseClient.sql("""
                         CREATE INDEX IF NOT EXISTS ix_asistencias_session_id
@@ -226,9 +234,6 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                         CREATE INDEX IF NOT EXISTS ix_asistencia_sesiones_institucion_id
                         ON asistencia_sesiones (institucion_id)
                         """).then())
-                .onErrorResume(error -> {
-                    log.warn("No se pudieron crear indices de sesiones de asistencia: {}", error.getMessage());
-                    return Mono.empty();
-                });
+                ;
     }
 }

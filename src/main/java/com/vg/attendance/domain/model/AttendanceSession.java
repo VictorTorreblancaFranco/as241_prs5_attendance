@@ -24,6 +24,7 @@ public class AttendanceSession {
     private UUID institucionId;
 
     private String claseId;
+    private String idempotencyKey;
     private String profesorId;
     private LocalDate fecha;
     private Integer anioLectivo;

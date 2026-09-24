@@ -9,9 +9,9 @@ spring:
   application:
     name: ${SPRING_APP_NAME:vg-ms-attendance}
   r2dbc:
-    url: ${DB_URL:r2dbc:postgresql://ep-twilight-rain-aquzch63-pooler.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require}
+    url: ${DB_URL:r2dbc:postgresql://ep-spring-bird-b4g1sfn8-pooler.c-6.us-east-2.aws.neon.tech/attendance?sslMode=require&channelBinding=require}
     username: ${DB_USERNAME:neondb_owner}
-    password: ${DB_PASSWORD:npg_gevd5bEc4Gai}
+    password: ${DB_PASSWORD:npg_lTIA6pzx5wsm}
     pool:
       initial-size: ${SPRING_R2DBC_POOL_INITIAL_SIZE:2}
       max-size: ${SPRING_R2DBC_POOL_MAX_SIZE:10}
@@ -51,7 +51,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: always
@@ -60,15 +60,19 @@ management:
   metrics:
     export:
       prometheus:
-        enabled: false
+        enabled: true
 
 attendance:
   internal-secret: ${ATTENDANCE_INTERNAL_SECRET:}
+  tenant-required: ${ATTENDANCE_TENANT_REQUIRED:false}
   clients:
     timeout: ${ATTENDANCE_CLIENT_TIMEOUT:5s}
   rate-limit:
     enabled: ${ATTENDANCE_RATE_LIMIT_ENABLED:true}
     requests-per-minute: ${ATTENDANCE_RATE_LIMIT_REQUESTS_PER_MINUTE:120}
+  roster-cache:
+    ttl: ${ATTENDANCE_ROSTER_CACHE_TTL:5m}
+    maximum-size: ${ATTENDANCE_ROSTER_CACHE_MAXIMUM_SIZE:500}
 
 springdoc:
   api-docs:
