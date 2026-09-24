@@ -231,8 +231,20 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                         ON asistencias (institucion_id)
                         """).then())
                 .then(databaseClient.sql("""
+                        CREATE INDEX IF NOT EXISTS ix_asistencias_estudiante_fecha
+                        ON asistencias (institucion_id, estudiante_id, fecha DESC)
+                        """).then())
+                .then(databaseClient.sql("""
+                        CREATE INDEX IF NOT EXISTS ix_asistencias_clase_fecha
+                        ON asistencias (institucion_id, clase_id, fecha)
+                        """).then())
+                .then(databaseClient.sql("""
                         CREATE INDEX IF NOT EXISTS ix_asistencia_sesiones_institucion_id
                         ON asistencia_sesiones (institucion_id)
+                        """).then())
+                .then(databaseClient.sql("""
+                        CREATE INDEX IF NOT EXISTS ix_auditoria_attendance_id_changed_at
+                        ON asistencia_auditoria (attendance_id, changed_at DESC)
                         """).then())
                 ;
     }

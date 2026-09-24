@@ -133,6 +133,11 @@ resilience4j:
         failure-rate-threshold: 50
         wait-duration-in-open-state: 10s
         permitted-number-of-calls-in-half-open-state: 3
+      academicService:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
   retry:
     instances:
       scheduleService:
@@ -142,5 +147,8 @@ resilience4j:
         max-attempts: 3
         wait-duration: 1s
       userService:
+        max-attempts: 3
+        wait-duration: 1s
+      academicService:
         max-attempts: 3
         wait-duration: 1s
