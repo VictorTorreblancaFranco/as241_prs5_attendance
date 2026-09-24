@@ -3,6 +3,7 @@ package com.vg.attendance.infrastructure.adapter.in.web.controller;
 import java.awt.Color;
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
@@ -52,6 +53,8 @@ public class ReportController {
 
     private static final String USER_NOT_SYNCHRONIZED = "Usuario no sincronizado";
     private static final String CLASS_NOT_SYNCHRONIZED = "Clase no sincronizada";
+    private static final DateTimeFormatter DISPLAY_DATE = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+    private static final DateTimeFormatter DISPLAY_DATE_TIME = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
     private final AttendanceRepositoryPort attendanceRepository;
     private final UserClient userClient;
@@ -283,10 +286,6 @@ public class ReportController {
             return fullName;
         }
 
-        if (user.getEmail() != null && !user.getEmail().isBlank()) {
-            return user.getEmail();
-        }
-
         return USER_NOT_SYNCHRONIZED;
     }
 
@@ -397,8 +396,10 @@ public class ReportController {
             titulo.setAlignment(Element.ALIGN_CENTER);
             doc.add(titulo);
             
-            doc.add(new Paragraph("Clase: " + className + " - Fecha: "
-                    + date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))));
+            doc.add(new Paragraph("Clase: " + className + " - Fecha: " + date.format(DISPLAY_DATE)));
+            doc.add(new Paragraph("Año lectivo: " + date.getYear()
+                    + " - Generado: " + LocalDateTime.now().format(DISPLAY_DATE_TIME),
+                    new Font(Font.HELVETICA, 9, Font.NORMAL, Color.GRAY)));
             doc.add(new Paragraph(" "));
 
             long total = attendances.size();
@@ -445,6 +446,7 @@ public class ReportController {
                 cell.setPadding(6);
                 table.addCell(cell);
             }
+            table.setHeaderRows(1);
 
             int counter = 1;
             for (Attendance a : attendances) {
@@ -530,8 +532,10 @@ public class ReportController {
             doc.add(titulo);
             
             doc.add(new Paragraph("Estudiante: " + nombreEstudiante));
-            doc.add(new Paragraph("Período: " + startDate.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) + 
-                                  " - " + endDate.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))));
+            doc.add(new Paragraph("Período: " + startDate.format(DISPLAY_DATE) + " - " + endDate.format(DISPLAY_DATE)));
+            doc.add(new Paragraph("Año lectivo: " + startDate.getYear()
+                    + " - Generado: " + LocalDateTime.now().format(DISPLAY_DATE_TIME),
+                    new Font(Font.HELVETICA, 9, Font.NORMAL, Color.GRAY)));
             doc.add(new Paragraph(" "));
 
             long total = attendances.size();
@@ -578,6 +582,7 @@ public class ReportController {
                 cell.setPadding(6);
                 table.addCell(cell);
             }
+            table.setHeaderRows(1);
 
             for (Attendance a : attendances) {
                 String estado = estadoLabel(a);
@@ -658,7 +663,10 @@ public class ReportController {
             Paragraph titulo = new Paragraph("REPORTE DIARIO DE ASISTENCIA", new Font(Font.HELVETICA, 16, Font.BOLD));
             titulo.setAlignment(Element.ALIGN_CENTER);
             doc.add(titulo);
-            doc.add(new Paragraph("Fecha: " + date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))));
+            doc.add(new Paragraph("Fecha: " + date.format(DISPLAY_DATE)));
+            doc.add(new Paragraph("Año lectivo: " + date.getYear()
+                    + " - Generado: " + LocalDateTime.now().format(DISPLAY_DATE_TIME),
+                    new Font(Font.HELVETICA, 9, Font.NORMAL, Color.GRAY)));
             doc.add(new Paragraph(" "));
 
             Map<String, List<Attendance>> porClase = attendances.stream()
@@ -676,6 +684,7 @@ public class ReportController {
                 cell.setPadding(6);
                 table.addCell(cell);
             }
+            table.setHeaderRows(1);
 
             for (Map.Entry<String, List<Attendance>> entry : porClase.entrySet()) {
                 String claseId = entry.getKey();
