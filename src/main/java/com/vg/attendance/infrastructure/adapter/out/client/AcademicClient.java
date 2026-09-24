@@ -2,6 +2,8 @@ package com.vg.attendance.infrastructure.adapter.out.client;
 
 import com.vg.attendance.infrastructure.adapter.out.client.dto.CourseResponse;
 import com.vg.attendance.infrastructure.adapter.out.client.dto.AcademicYearResponse;
+import com.vg.attendance.infrastructure.adapter.out.client.dto.GradeResponse;
+import com.vg.attendance.infrastructure.adapter.out.client.dto.SectionResponse;
 import com.vg.attendance.domain.exception.ServiceUnavailableException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -57,6 +59,36 @@ public class AcademicClient {
                 .timeout(requestTimeout)
                 .onErrorResume(error -> {
                     log.warn("Course service unavailable while resolving course {}: {}", id, error.getMessage());
+                    return Mono.empty();
+                });
+    }
+
+    public Mono<GradeResponse> getGradeById(Long id) {
+        return academicWebClient.get()
+                .uri("/api/academic/grades/{id}", id)
+                .header("X-Internal-Request", "gateway")
+                .retrieve()
+                .bodyToMono(GradeResponse.class)
+                .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
+                .transformDeferred(RetryOperator.of(retry))
+                .timeout(requestTimeout)
+                .onErrorResume(error -> {
+                    log.warn("Grade service unavailable while resolving grade {}: {}", id, error.getMessage());
+                    return Mono.empty();
+                });
+    }
+
+    public Mono<SectionResponse> getSectionById(Long id) {
+        return academicWebClient.get()
+                .uri("/api/academic/sections/{id}", id)
+                .header("X-Internal-Request", "gateway")
+                .retrieve()
+                .bodyToMono(SectionResponse.class)
+                .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
+                .transformDeferred(RetryOperator.of(retry))
+                .timeout(requestTimeout)
+                .onErrorResume(error -> {
+                    log.warn("Section service unavailable while resolving section {}: {}", id, error.getMessage());
                     return Mono.empty();
                 });
     }
