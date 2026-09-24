@@ -34,6 +34,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.Locale;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
@@ -48,6 +49,7 @@ public class AttendanceApplicationService implements
         UpdateAttendanceUseCase {
 
     private static final ZoneId SCHOOL_ZONE = ZoneId.of("America/Lima");
+    private static final int BULK_PERSISTENCE_CONCURRENCY = 6;
     
     private final AttendanceRepositoryPort attendanceRepository;
     private final AttendanceAuditRepositoryPort auditRepository;
@@ -88,6 +90,64 @@ public class AttendanceApplicationService implements
             .flatMap(saved -> notifyAttendance(saved).thenReturn(saved))
             .map(this::toResponse);
         });
+    }
+
+    @Override
+    public Flux<AttendanceResponse> registerAttendanceBulk(List<RegisterAttendanceCommand> commands) {
+        if (commands == null || commands.isEmpty()) {
+            return Flux.empty();
+        }
+
+        return Mono.deferContextual(context -> {
+            commands.forEach(command -> applyTenantFromContext(command, context));
+            RegisterAttendanceCommand first = commands.get(0);
+            return validateAttendanceDate(first.getFecha())
+                .then(ensureSession(first))
+                .flatMap(session -> Flux.fromIterable(commands)
+                    .flatMapSequential(command -> registerNewAttendance(command, session),
+                            BULK_PERSISTENCE_CONCURRENCY)
+                    .collectList()
+                    .flatMap(saved -> notifyBulk(saved).thenReturn(saved)));
+        }).flatMapMany(Flux::fromIterable)
+          .map(this::toResponse);
+    }
+
+    private Mono<Attendance> registerNewAttendance(RegisterAttendanceCommand command,
+                                                    AttendanceSession session) {
+        Mono<Boolean> duplicate = command.getInstitucionId() == null
+            ? attendanceRepository.existsByEstudianteIdAndClaseIdAndFecha(
+                command.getEstudianteId(), command.getClaseId(), command.getFecha())
+            : attendanceRepository.existsByEstudianteIdAndClaseIdAndFecha(
+                command.getInstitucionId().toString(), command.getEstudianteId(),
+                command.getClaseId(), command.getFecha());
+
+        return duplicate.flatMap(exists -> {
+            if (exists) {
+                return findExistingAttendance(command)
+                    .switchIfEmpty(Mono.error(new ConflictException(
+                        "Ya existe un registro de asistencia para este estudiante en esta clase en esta fecha")));
+            }
+
+            return Mono.just(buildAttendance(command, session.getId()))
+                .map(this::normalizeByStatus)
+                .flatMap(domainService::validateAttendance)
+                .flatMap(attendanceRepository::save)
+                .flatMap(saved -> saveCreateAudit(saved, command).thenReturn(saved));
+        }).onErrorMap(this::mapDuplicateError);
+    }
+
+    private Mono<Attendance> findExistingAttendance(RegisterAttendanceCommand command) {
+        Flux<Attendance> records = command.getInstitucionId() == null
+            ? attendanceRepository.findByClaseIdAndFecha(command.getClaseId(), command.getFecha())
+            : attendanceRepository.findByClaseIdAndFecha(command.getInstitucionId().toString(),
+                command.getClaseId(), command.getFecha());
+        return records.filter(record -> Objects.equals(record.getEstudianteId(), command.getEstudianteId())).next();
+    }
+
+    private Mono<Void> notifyBulk(List<Attendance> saved) {
+        return Flux.fromIterable(saved)
+            .flatMap(this::notifyAttendance, BULK_PERSISTENCE_CONCURRENCY)
+            .then();
     }
 
     @Override

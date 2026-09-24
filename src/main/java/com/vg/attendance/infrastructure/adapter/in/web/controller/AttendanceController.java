@@ -59,9 +59,6 @@ import java.util.Set;
 public class AttendanceController {
 
     private static final ZoneId SCHOOL_ZONE = ZoneId.of("America/Lima");
-    // A new class session is created lazily; serializing the batch prevents
-    // concurrent inserts from racing on the unique class/date constraint.
-    private static final int BULK_SAVE_CONCURRENCY = 1;
     private static final String USER_NOT_SYNCHRONIZED = "Usuario no sincronizado";
     
     private final RegisterAttendanceUseCase registerUseCase;
@@ -436,14 +433,38 @@ public class AttendanceController {
 
         Flux<AttendanceResponse> bulkOperation = attendanceByClass(claseId, request.getFecha())
             .collectMap(AttendanceResponse::getEstudianteId)
-            .flatMapMany(existing -> Flux.fromIterable(request.getAsistencias())
-                .flatMapSequential(
-                    item -> saveBulkItem(claseId, request, userId, role, existing.get(item.getEstudianteId()), item, idempotencyKey),
-                    BULK_SAVE_CONCURRENCY)
-                .collectList()
-                .flatMapMany(savedAttendances -> registerUseCase
-                    .refreshSessionCounters(claseId, request.getFecha(), students.size(), userId)
-                    .thenMany(enrichAttendances(savedAttendances, token))));
+            .flatMapMany(existing -> {
+                List<AttendanceBulkItemRequest> newItems = request.getAsistencias().stream()
+                    .filter(item -> !existing.containsKey(item.getEstudianteId()))
+                    .toList();
+                List<AttendanceBulkItemRequest> existingItems = request.getAsistencias().stream()
+                    .filter(item -> existing.containsKey(item.getEstudianteId()))
+                    .toList();
+
+                Mono<Map<String, AttendanceResponse>> newRecords = registerUseCase
+                    .registerAttendanceBulk(newItems.stream()
+                        .map(item -> toBulkCommand(claseId, request, userId, role, item, idempotencyKey))
+                        .toList())
+                    .collectMap(AttendanceResponse::getEstudianteId);
+
+                Mono<Map<String, AttendanceResponse>> updatedRecords = Flux.fromIterable(existingItems)
+                    .concatMap(item -> saveBulkItem(claseId, request, userId, role,
+                        existing.get(item.getEstudianteId()), item, idempotencyKey))
+                    .collectMap(AttendanceResponse::getEstudianteId);
+
+                return Mono.zip(newRecords, updatedRecords)
+                    .flatMapMany(tuple -> {
+                        Map<String, AttendanceResponse> saved = new HashMap<>(tuple.getT1());
+                        saved.putAll(tuple.getT2());
+                        List<AttendanceResponse> ordered = request.getAsistencias().stream()
+                            .map(item -> saved.get(item.getEstudianteId()))
+                            .filter(Objects::nonNull)
+                            .toList();
+                        return registerUseCase
+                            .refreshSessionCounters(claseId, request.getFecha(), students.size(), userId)
+                            .thenMany(enrichAttendances(ordered, token));
+                    });
+            });
         return transactionalOperator == null
             ? bulkOperation
             : bulkOperation.as(transactionalOperator::transactional);
@@ -495,22 +516,7 @@ public class AttendanceController {
                                                   AttendanceBulkItemRequest item,
                                                   String idempotencyKey) {
         if (existing == null) {
-            RegisterAttendanceCommand command = RegisterAttendanceCommand.builder()
-                .estudianteId(item.getEstudianteId())
-                .claseId(claseId)
-                .profesorId(request.getProfesorId())
-                .registradoPor(userId)
-                .registradoPorRole(role)
-                .fecha(request.getFecha())
-                .anioLectivo(request.getAnioLectivo())
-                .estado(item.getEstado())
-                .horaLlegada(item.getHoraLlegada())
-                .justificacionNota(item.getJustificacionNota())
-                .justificacionFotoUrl(item.getJustificacionFotoUrl())
-                .totalEstudiantesSesion(request.getAsistencias().size())
-                .idempotencyKey(idempotencyKey)
-                .skipSessionCounterUpdate(true)
-                .build();
+            RegisterAttendanceCommand command = toBulkCommand(claseId, request, userId, role, item, idempotencyKey);
             return registerUseCase.registerAttendance(command)
                 .onErrorResume(ConflictException.class, conflict -> findExistingBulkAttendance(claseId, request.getFecha(), item.getEstudianteId())
                     .switchIfEmpty(Mono.error(conflict))
@@ -535,6 +541,30 @@ public class AttendanceController {
             .changedByRole(role)
             .build();
         return updateUseCase.updateAttendance(existing.getId(), command);
+    }
+
+    private RegisterAttendanceCommand toBulkCommand(String claseId,
+                                                     AttendanceBulkRequest request,
+                                                     String userId,
+                                                     String role,
+                                                     AttendanceBulkItemRequest item,
+                                                     String idempotencyKey) {
+        return RegisterAttendanceCommand.builder()
+            .estudianteId(item.getEstudianteId())
+            .claseId(claseId)
+            .profesorId(request.getProfesorId())
+            .registradoPor(userId)
+            .registradoPorRole(role)
+            .fecha(request.getFecha())
+            .anioLectivo(request.getAnioLectivo())
+            .estado(item.getEstado())
+            .horaLlegada(item.getHoraLlegada())
+            .justificacionNota(item.getJustificacionNota())
+            .justificacionFotoUrl(item.getJustificacionFotoUrl())
+            .totalEstudiantesSesion(request.getAsistencias().size())
+            .idempotencyKey(idempotencyKey)
+            .skipSessionCounterUpdate(true)
+            .build();
     }
 
     private Mono<AttendanceResponse> findExistingBulkAttendance(String claseId, LocalDate fecha, String estudianteId) {

@@ -2,6 +2,7 @@ package com.vg.attendance.application.service;
 
 import com.vg.attendance.application.port.in.command.RegisterAttendanceCommand;
 import com.vg.attendance.application.port.in.command.UpdateAttendanceCommand;
+import com.vg.attendance.application.port.in.dto.AttendanceResponse;
 import com.vg.attendance.application.port.out.AttendanceAuditRepositoryPort;
 import com.vg.attendance.application.port.out.AttendanceRepositoryPort;
 import com.vg.attendance.application.port.out.AttendanceSessionRepositoryPort;
@@ -23,6 +24,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -60,6 +62,39 @@ class AttendanceApplicationServiceTest {
 
         assertThat(sessionRepository.records).hasSize(1);
         assertThat(sessionRepository.records.get(1L).getClaseId()).isEqualTo("class-1");
+    }
+
+    @Test
+    void registerAttendanceBulkReusesOneSessionAndCreatesAllAudits() {
+        List<RegisterAttendanceCommand> commands = List.of(
+            bulkCommand("student-1"),
+            bulkCommand("student-2"),
+            bulkCommand("student-3"));
+
+        StepVerifier.create(service.registerAttendanceBulk(commands).collectList())
+            .assertNext(responses -> {
+                assertThat(responses).hasSize(3);
+                assertThat(responses).extracting(AttendanceResponse::getSessionId)
+                    .containsOnly(1L);
+            })
+            .verifyComplete();
+
+        assertThat(sessionRepository.records).hasSize(1);
+        assertThat(auditRepository.records).hasSize(3);
+    }
+
+    private RegisterAttendanceCommand bulkCommand(String studentId) {
+        return RegisterAttendanceCommand.builder()
+            .estudianteId(studentId)
+            .claseId("class-1")
+            .profesorId("teacher-1")
+            .registradoPor("teacher-1")
+            .fecha(LocalDate.of(2026, 6, 5))
+            .anioLectivo(2026)
+            .estado("A")
+            .totalEstudiantesSesion(3)
+            .skipSessionCounterUpdate(true)
+            .build();
     }
 
     @Test
