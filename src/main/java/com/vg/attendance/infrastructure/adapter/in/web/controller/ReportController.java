@@ -130,11 +130,13 @@ public class ReportController {
                 }
                 return Mono.zip(
                     obtenerNombreEstudiante(studentId),
-                    obtenerNombres(attendances)
+                    obtenerNombres(attendances),
+                    obtenerNombresClases(attendances, authHeader)
                 ).flatMap(tuple -> {
                     String nombre = tuple.getT1();
                     Map<String, String> nombres = tuple.getT2();
-                    return generatePdf(() -> generarPdfEstudiante(attendances, studentId, nombre, startDate, endDate, nombres));
+                    return generatePdf(() -> generarPdfEstudiante(
+                        attendances, nombre, startDate, endDate, nombres, tuple.getT3()));
                 });
             })
             .onErrorResume(ForbiddenException.class, e -> Mono.just(ResponseEntity.<byte[]>status(HttpStatus.FORBIDDEN).build()))
@@ -356,8 +358,8 @@ public class ReportController {
         }
     }
 
-    private ResponseEntity<byte[]> generarPdfClase(List<Attendance> attendances, LocalDate date, 
-                                                    String classId, Map<String, String> nombres) {
+    private ResponseEntity<byte[]> generarPdfClase(List<Attendance> attendances, LocalDate date,
+                                                    String className, Map<String, String> nombres) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             Document doc = new Document(PageSize.A4);
@@ -395,7 +397,8 @@ public class ReportController {
             titulo.setAlignment(Element.ALIGN_CENTER);
             doc.add(titulo);
             
-            doc.add(new Paragraph("Clase ID: " + classId + " - Fecha: " + date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))));
+            doc.add(new Paragraph("Clase: " + className + " - Fecha: "
+                    + date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))));
             doc.add(new Paragraph(" "));
 
             long total = attendances.size();
@@ -478,7 +481,8 @@ public class ReportController {
 
             return ResponseEntity.ok()
                     .contentType(MediaType.APPLICATION_PDF)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=reporte_clase_" + classId + "_" + date + ".pdf")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=reporte_clase_"
+                            + safeFilenamePart(className, "clase") + "_" + date + ".pdf")
                     .body(out.toByteArray());
         } catch (Exception e) {
             log.error("Error generando PDF: {}", e.getMessage());
@@ -486,9 +490,10 @@ public class ReportController {
         }
     }
 
-    private ResponseEntity<byte[]> generarPdfEstudiante(List<Attendance> attendances, String studentId, 
-                                                         String nombreEstudiante, LocalDate startDate, 
-                                                         LocalDate endDate, Map<String, String> nombres) {
+    private ResponseEntity<byte[]> generarPdfEstudiante(List<Attendance> attendances,
+                                                         String nombreEstudiante, LocalDate startDate,
+                                                         LocalDate endDate, Map<String, String> nombres,
+                                                         Map<String, String> nombresClases) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             Document doc = new Document(PageSize.A4);
@@ -579,7 +584,8 @@ public class ReportController {
                 Color estadoColor = estadoColor(a);
                 
                 table.addCell(new PdfPCell(new Phrase(a.getFecha().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")), new Font(Font.HELVETICA, 9))));
-                table.addCell(new PdfPCell(new Phrase(a.getClaseId(), new Font(Font.HELVETICA, 9))));
+                String nombreClase = nombresClases.getOrDefault(a.getClaseId(), CLASS_NOT_SYNCHRONIZED);
+                table.addCell(new PdfPCell(new Phrase(nombreClase, new Font(Font.HELVETICA, 9))));
                 
                 PdfPCell estadoCell = new PdfPCell(new Phrase(estado, new Font(Font.HELVETICA, 9, Font.BOLD, estadoColor)));
                 estadoCell.setHorizontalAlignment(Element.ALIGN_CENTER);
@@ -605,7 +611,9 @@ public class ReportController {
 
             return ResponseEntity.ok()
                     .contentType(MediaType.APPLICATION_PDF)
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=reporte_estudiante_" + studentId + ".pdf")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=reporte_estudiante_"
+                            + safeFilenamePart(nombreEstudiante, "estudiante") + "_"
+                            + startDate + "_" + endDate + ".pdf")
                     .body(out.toByteArray());
         } catch (Exception e) {
             log.error("Error generando PDF: {}", e.getMessage());
@@ -732,6 +740,14 @@ public class ReportController {
 
     private boolean isJustifiedLate(Attendance attendance) {
         return "T".equals(attendance.getEstado()) && hasJustification(attendance);
+    }
+
+    private String safeFilenamePart(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String normalized = value.trim().replaceAll("[^\\p{L}\\p{N}]+", "_");
+        return normalized.isBlank() ? fallback : normalized;
     }
 
     private boolean hasJustification(Attendance attendance) {
