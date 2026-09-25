@@ -36,7 +36,7 @@ public class WebClientConfig {
     private static final String INTERNAL_REQUEST_HEADER = "X-Internal-Request";
     private static final String INTERNAL_REQUEST_VALUE = "gateway";
 
-    @Value("${attendance.internal-secret:}")
+    @Value("${internal-secret:edunova-internal-trust}")
     private String internalSecret;
 
     private ExchangeFilterFunction propagateRequestContext() {

@@ -5,6 +5,11 @@ server:
     mime-types: application/json,application/xml,text/html,text/xml,text/plain,application/javascript,text/css
     min-response-size: 1024
 
+# Secret para salidas servicio→servicio (comms lo exige). Entrada:
+# attendance.internal-secret (más abajo) sigue vacío por defecto para no
+# romper llamadas MS→MS entrantes sin secret (p. ej. welfare → attendance).
+internal-secret: ${INTERNAL_SECRET:${ATTENDANCE_INTERNAL_SECRET:edunova-internal-trust}}
+
 spring:
   application:
     name: ${SPRING_APP_NAME:vg-ms-attendance}
