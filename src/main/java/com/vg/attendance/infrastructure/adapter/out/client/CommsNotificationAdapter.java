@@ -107,8 +107,10 @@ public class CommsNotificationAdapter implements NotificationPort {
                     putStudentId(request, attendance.getEstudianteId());
                     request.put("tipo", tipo);
                     request.put("mensaje", buildMensaje(attendance, student, tipo));
-                    request.put("canal", "ambos");
+                    // "asistencia" solo a Bandeja/chat (sin push); F/T/J siguen avisando por push.
+                    request.put("canal", "asistencia".equals(tipo) ? "web" : "ambos");
                     request.put("prioridad", "normal");
+                    putSenderId(request, attendance.getProfesorId());
                     // Evita duplicados si se re-guarda la misma asistencia.
                     request.put("idempotencyKey",
                             "att-" + attendance.getId() + "-" + tipo + "-" + parentId);
@@ -147,12 +149,21 @@ public class CommsNotificationAdapter implements NotificationPort {
         }
     }
 
+    /** Emisor real (profesor de la clase) para que el chat quede profesor ↔ apoderado. */
+    private static void putSenderId(Map<String, Object> request, String profesorId) {
+        UUID senderId = parseUuid(profesorId);
+        if (senderId != null) {
+            request.put("senderUserId", senderId.toString());
+        }
+    }
+
     private String tipoFor(String status) {
         if (status == null) {
             return null;
         }
 
         return switch (status.toUpperCase()) {
+            case "A" -> "asistencia";
             case "F" -> "falta";
             case "T" -> "tardanza";
             case "J" -> "falta_justificada";
@@ -165,6 +176,7 @@ public class CommsNotificationAdapter implements NotificationPort {
         String fecha = attendance.getFecha() != null ? attendance.getFecha().toString() : "";
 
         return switch (tipo) {
+            case "asistencia" -> "Su hijo " + nombre + " asistió hoy (" + fecha + ").";
             case "falta" -> "Su hijo " + nombre + " falta hoy (" + fecha + ").";
             case "tardanza" -> {
                 String hora = attendance.getHoraLlegada() != null ? attendance.getHoraLlegada().toString() : "";
