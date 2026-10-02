@@ -8,10 +8,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 @Slf4j
 @Component
@@ -35,64 +38,113 @@ public class CommsNotificationAdapter implements NotificationPort {
             return Mono.empty();
         }
 
+        // TODOS los apoderados del estudiante (padre y madre), no solo el primero.
         return userClient.getGuardiansByStudentId(attendance.getEstudianteId())
-                .next()
-                .flatMap(link -> buildRequest(attendance, link, tipo))
-                .flatMap(this::sendNotification)
+                .collectList()
+                .flatMapMany(Flux::fromIterable)
+                .concatMap(link -> notifyGuardian(attendance, link, tipo))
+                .then()
                 .onErrorResume(error -> {
-                    log.warn("No se pudo notificar asistencia a comms: {}", error.getMessage());
+                    log.error("Notificacion de asistencia NO enviada a comms: asistenciaId={} estudiante={} tipo={} motivo={}",
+                            attendance.getId(), attendance.getEstudianteId(), tipo, error.getMessage());
                     return Mono.empty();
                 });
     }
 
     @Override
     public Mono<Void> notifyThreeFullAbsenceDays(String estudianteId, int absenceDays) {
+        String fecha = LocalDate.now().toString().replace("-", "");
         return userClient.getGuardiansByStudentId(estudianteId)
-                .next()
-                .flatMap(link -> {
+                .collectList()
+                .flatMapMany(Flux::fromIterable)
+                .concatMap(link -> {
+                    UUID parentId = parseUuid(link.getParentId());
+                    if (parentId == null) {
+                        log.error("Falta acumulada sin notificar: parentId invalido '{}' para estudiante {}",
+                                link.getParentId(), estudianteId);
+                        return Mono.empty();
+                    }
                     Map<String, Object> request = new LinkedHashMap<>();
-                    request.put("destinatarioId", link.getParentId());
-                    request.put("studentId", estudianteId);
+                    request.put("destinatarioId", parentId.toString());
+                    putStudentId(request, estudianteId);
                     request.put("tipo", "falta_acumulada");
                     request.put("mensaje", "Su hijo ha acumulado " + absenceDays + " faltas consecutivas.");
                     request.put("canal", "ambos");
                     request.put("prioridad", "alta");
-                    return sendNotification(request);
+                    request.put("idempotencyKey", "falta3-" + estudianteId + "-" + fecha + "-" + parentId);
+                    return sendNotification(request, "falta_acumulada", parentId);
                 })
+                .then()
                 .onErrorResume(error -> {
-                    log.warn("No se pudo notificar falta acumulada a comms: {}", error.getMessage());
+                    log.error("Falta acumulada NO notificada a comms: estudiante={} dias={} motivo={}",
+                            estudianteId, absenceDays, error.getMessage());
                     return Mono.empty();
                 });
+    }
+
+    private Mono<Void> notifyGuardian(Attendance attendance, ParentStudentLinkResponse link, String tipo) {
+        UUID parentId = parseUuid(link.getParentId());
+        if (parentId == null) {
+            log.error("Asistencia {} sin notificar: parentId invalido '{}' estudiante {}",
+                    attendance.getId(), link.getParentId(), attendance.getEstudianteId());
+            return Mono.empty();
+        }
+        return buildRequest(attendance, link, tipo, parentId)
+                .flatMap(request -> sendNotification(request, tipo, parentId));
     }
 
     private Mono<Map<String, Object>> buildRequest(
             Attendance attendance,
             ParentStudentLinkResponse link,
-            String tipo
+            String tipo,
+            UUID parentId
     ) {
         return userClient.getUserById(attendance.getEstudianteId())
                 .defaultIfEmpty(UserResponse.builder().id(attendance.getEstudianteId()).build())
                 .map(student -> {
                     Map<String, Object> request = new LinkedHashMap<>();
-                    request.put("destinatarioId", link.getParentId());
-                    request.put("studentId", attendance.getEstudianteId());
+                    request.put("destinatarioId", parentId.toString());
+                    putStudentId(request, attendance.getEstudianteId());
                     request.put("tipo", tipo);
                     request.put("mensaje", buildMensaje(attendance, student, tipo));
                     request.put("canal", "ambos");
                     request.put("prioridad", "normal");
+                    // Evita duplicados si se re-guarda la misma asistencia.
+                    request.put("idempotencyKey",
+                            "att-" + attendance.getId() + "-" + tipo + "-" + parentId);
                     return request;
                 });
     }
 
-    private Mono<Void> sendNotification(Map<String, Object> request) {
+    private Mono<Void> sendNotification(Map<String, Object> request, String tipo, UUID parentId) {
         return commsWebClient.post()
                 .uri("/api/notifications/send")
                 .header("X-Internal-Request", "gateway")
                 .bodyValue(request)
                 .retrieve()
                 .toBodilessEntity()
-                .doOnSuccess(response -> log.info("Notificación de asistencia enviada a comms"))
+                .doOnSuccess(response -> log.info("Notificacion de asistencia enviada a comms: tipo={} destinatario={}",
+                        tipo, parentId))
                 .then();
+    }
+
+    private static UUID parseUuid(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /** studentId invalido (datos de prueba) tiraria 400 en comms: se omite el campo. */
+    private static void putStudentId(Map<String, Object> request, String estudianteId) {
+        UUID studentId = parseUuid(estudianteId);
+        if (studentId != null) {
+            request.put("studentId", studentId.toString());
+        }
     }
 
     private String tipoFor(String status) {
@@ -122,7 +174,7 @@ public class CommsNotificationAdapter implements NotificationPort {
                 String nota = attendance.getJustificacionNota() != null ? attendance.getJustificacionNota() : "";
                 yield "Falta justificada de " + nombre + " (" + fecha + "): " + nota;
             }
-            default -> "Notificación de asistencia de " + nombre + " (" + fecha + ").";
+            default -> "Notificacion de asistencia de " + nombre + " (" + fecha + ").";
         };
     }
 
