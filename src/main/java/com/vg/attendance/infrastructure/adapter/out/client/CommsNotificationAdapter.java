@@ -64,15 +64,21 @@ public class CommsNotificationAdapter implements NotificationPort {
                                 link.getParentId(), estudianteId);
                         return Mono.empty();
                     }
-                    Map<String, Object> request = new LinkedHashMap<>();
-                    request.put("destinatarioId", parentId.toString());
-                    putStudentId(request, estudianteId);
-                    request.put("tipo", "falta_acumulada");
-                    request.put("mensaje", "Su hijo ha acumulado " + absenceDays + " faltas consecutivas.");
-                    request.put("canal", "ambos");
-                    request.put("prioridad", "alta");
-                    request.put("idempotencyKey", "falta3-" + estudianteId + "-" + fecha + "-" + parentId);
-                    return sendNotification(request, "falta_acumulada", parentId);
+                    return userClient.getUserById(estudianteId)
+                            .defaultIfEmpty(UserResponse.builder().id(estudianteId).build())
+                            .map(student -> {
+                                Map<String, Object> request = new LinkedHashMap<>();
+                                request.put("destinatarioId", parentId.toString());
+                                putStudentId(request, estudianteId);
+                                request.put("tipo", "falta_acumulada");
+                                request.put("titulo", "Falta acumulada de " + fullName(student));
+                                request.put("mensaje", "Su hijo ha acumulado " + absenceDays + " faltas consecutivas.");
+                                request.put("canal", "ambos");
+                                request.put("prioridad", "alta");
+                                request.put("idempotencyKey", "falta3-" + estudianteId + "-" + fecha + "-" + parentId);
+                                return request;
+                            })
+                            .flatMap(request -> sendNotification(request, "falta_acumulada", parentId));
                 })
                 .then()
                 .onErrorResume(error -> {
@@ -106,6 +112,7 @@ public class CommsNotificationAdapter implements NotificationPort {
                     request.put("destinatarioId", parentId.toString());
                     putStudentId(request, attendance.getEstudianteId());
                     request.put("tipo", tipo);
+                    request.put("titulo", tituloFor(tipo, fullName(student)));
                     request.put("mensaje", buildMensaje(attendance, student, tipo));
                     // "asistencia" solo a Bandeja/chat (sin push); F/T/J siguen avisando por push.
                     request.put("canal", "asistencia".equals(tipo) ? "web" : "ambos");
@@ -168,6 +175,17 @@ public class CommsNotificationAdapter implements NotificationPort {
             case "T" -> "tardanza";
             case "J" -> "falta_justificada";
             default -> null;
+        };
+    }
+
+    /** Título legible para Bandeja/chat: "Falta de Juan Pérez" en vez del tipo crudo. */
+    private static String tituloFor(String tipo, String nombre) {
+        return switch (tipo) {
+            case "asistencia" -> "Asistencia de " + nombre;
+            case "falta" -> "Falta de " + nombre;
+            case "tardanza" -> "Tardanza de " + nombre;
+            case "falta_justificada" -> "Falta justificada de " + nombre;
+            default -> tipo;
         };
     }
 
