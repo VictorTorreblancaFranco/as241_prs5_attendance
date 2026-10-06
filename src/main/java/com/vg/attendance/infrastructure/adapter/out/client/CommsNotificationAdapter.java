@@ -52,8 +52,12 @@ public class CommsNotificationAdapter implements NotificationPort {
     }
 
     @Override
-    public Mono<Void> notifyThreeFullAbsenceDays(String estudianteId, int absenceDays) {
-        String fecha = LocalDate.now().toString().replace("-", "");
+    public Mono<Void> notifyThreeFullAbsenceDays(String estudianteId, int absenceDays,
+                                                 LocalDate finRacha, String profesorId) {
+        // La clave usa el fin de la racha, no hoy: si el docente registra las faltas
+        // con un día de retraso, la racha sigue siendo la misma y no se duplica el aviso.
+        String claveRacha = (finRacha != null ? finRacha : LocalDate.now()).toString().replace("-", "");
+        String frase = MensajesFaltaAcumulada.frase();
         return userClient.getGuardiansByStudentId(estudianteId)
                 .collectList()
                 .flatMapMany(Flux::fromIterable)
@@ -72,10 +76,17 @@ public class CommsNotificationAdapter implements NotificationPort {
                                 putStudentId(request, estudianteId);
                                 request.put("tipo", "falta_acumulada");
                                 request.put("titulo", "Falta acumulada de " + fullName(student));
-                                request.put("mensaje", "Su hijo ha acumulado " + absenceDays + " faltas consecutivas.");
+                                // El mensaje base explica el hecho; la frase al azar invita
+                                // a conversar, para que no se sienta un aviso automático más.
+                                request.put("mensaje", "Su hijo ha acumulado " + absenceDays
+                                        + " faltas consecutivas. " + frase);
                                 request.put("canal", "ambos");
-                                request.put("prioridad", "alta");
-                                request.put("idempotencyKey", "falta3-" + estudianteId + "-" + fecha + "-" + parentId);
+                                // Es el aviso de asistencia más serio: entra al push del
+                                // apoderado (prioridad máxima) y también a su conversación
+                                // con el profesor que registró la falta.
+                                request.put("prioridad", "urgente");
+                                putSenderId(request, profesorId);
+                                request.put("idempotencyKey", "falta3-" + estudianteId + "-" + claveRacha + "-" + parentId);
                                 return request;
                             })
                             .flatMap(request -> sendNotification(request, "falta_acumulada", parentId));

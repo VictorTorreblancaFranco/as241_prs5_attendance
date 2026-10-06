@@ -33,6 +33,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.Comparator;
 import java.util.Locale;
 import java.util.List;
 import java.util.Objects;
@@ -50,6 +51,12 @@ public class AttendanceApplicationService implements
 
     private static final ZoneId SCHOOL_ZONE = ZoneId.of("America/Lima");
     private static final int BULK_PERSISTENCE_CONCURRENCY = 6;
+
+    /** Días de falta seguidos que activan el aviso a la familia. */
+    private static final int UMBRAL_FALTAS_CONSECUTIVAS = 3;
+
+    /** Días hacia atrás que se revisan para contar la racha (cubre fines de semana). */
+    private static final int VENTANA_RACHA_DIAS = 30;
     
     private final AttendanceRepositoryPort attendanceRepository;
     private final AttendanceAuditRepositoryPort auditRepository;
@@ -87,7 +94,9 @@ public class AttendanceApplicationService implements
                         .thenReturn(saved));
             })
             .onErrorMap(this::mapDuplicateError)
-            .flatMap(saved -> notifyAttendance(saved).thenReturn(saved))
+            .flatMap(saved -> notifyAttendance(saved)
+                .then(avisarRachaDeFaltas(saved))
+                .thenReturn(saved))
             .map(this::toResponse);
         });
     }
@@ -107,7 +116,9 @@ public class AttendanceApplicationService implements
                     .flatMapSequential(command -> registerNewAttendance(command, session),
                             BULK_PERSISTENCE_CONCURRENCY)
                     .collectList()
-                    .flatMap(saved -> notifyBulk(saved).thenReturn(saved)));
+                    .flatMap(saved -> notifyBulk(saved)
+                        .then(avisarRachasDeFaltas(saved))
+                        .thenReturn(saved)));
         }).flatMapMany(Flux::fromIterable)
           .map(this::toResponse);
     }
@@ -199,7 +210,9 @@ public class AttendanceApplicationService implements
                     .flatMap(attendanceRepository::save)
                     .flatMap(saved -> saveAudit(previous, saved, command, "UPDATE").thenReturn(saved));
             })
-            .flatMap(saved -> notifyAttendance(saved).thenReturn(saved))
+            .flatMap(saved -> notifyAttendance(saved)
+                .then(avisarRachaDeFaltas(saved))
+                .thenReturn(saved))
             .map(this::toResponse);
     }
     
@@ -320,6 +333,89 @@ public class AttendanceApplicationService implements
             .actualizadoEn(attendance.getActualizadoEn())
             .build();
     }
+
+    /**
+     * Detecta la racha de faltas consecutivas y dispara el aviso de falta acumulada.
+     *
+     * Solo corre cuando la asistencia guardada es "F": una asistencia o una
+     * justificación pueden cortar la racha, nunca crearla. Con 3 o más días de
+     * ausencia se avisa UNA vez por racha, porque la clave de idempotencia en comms
+     * lleva la fecha de la última falta de la racha.
+     */
+    private Mono<Void> avisarRachaDeFaltas(Attendance attendance) {
+        if (attendance == null || !"F".equalsIgnoreCase(attendance.getEstado())
+                || attendance.getEstudianteId() == null || attendance.getFecha() == null) {
+            return Mono.empty();
+        }
+        return Mono.defer(() -> rachaDeFaltas(attendance.getEstudianteId(), attendance.getFecha()))
+                .flatMap(racha -> {
+                    if (racha.diasFalta() < UMBRAL_FALTAS_CONSECUTIVAS) {
+                        return Mono.empty();
+                    }
+                    log.info("Racha de {} faltas para estudiante {} (terminó {}): se notifica a la familia",
+                            racha.diasFalta(), attendance.getEstudianteId(), racha.finRacha());
+                    return notificationPort.notifyThreeFullAbsenceDays(
+                            attendance.getEstudianteId(), racha.diasFalta(),
+                            racha.finRacha(), attendance.getProfesorId());
+                })
+                .onErrorResume(error -> {
+                    // La ausencia ya quedó registrada: si el aviso falla, se registra
+                    // el motivo y se sigue (el siguiente registro reintentará).
+                    log.warn("No se pudo evaluar la racha de faltas de {}: {}",
+                            attendance.getEstudianteId(), error.getMessage());
+                    return Mono.empty();
+                })
+                .then();
+    }
+
+    private Mono<Void> avisarRachasDeFaltas(List<Attendance> guardadas) {
+        if (guardadas == null || guardadas.isEmpty()) {
+            return Mono.empty();
+        }
+        return Flux.fromIterable(guardadas)
+                .flatMap(this::avisarRachaDeFaltas, BULK_PERSISTENCE_CONCURRENCY)
+                .then();
+    }
+
+    /** Días de falta consecutivos hasta {@code fecha}, tolerando el fin de semana. */
+    private Mono<RachaFaltas> rachaDeFaltas(String estudianteId, LocalDate fecha) {
+        return attendanceRepository
+                .findByEstudianteIdAndFechaBetween(estudianteId, fecha.minusDays(VENTANA_RACHA_DIAS), fecha)
+                .collectList()
+                .map(registros -> {
+                    // Un alumno tiene varios registros por día (una por clase): para la
+                    // racha importa el DÍA, no cuántas clases se perdió ese día.
+                    var diasConFalta = registros.stream()
+                            .filter(r -> "F".equalsIgnoreCase(r.getEstado()) && r.getFecha() != null)
+                            .map(Attendance::getFecha)
+                            .distinct()
+                            .sorted(Comparator.reverseOrder())
+                            .toList();
+
+                    // El fin de la racha es el día MÁS RECENTE con falta (la que se
+                    // acaba de registrar), no el más antiguo: es lo que identifica la
+                    // racha en la clave de idempotencia del aviso.
+                    LocalDate fin = diasConFalta.isEmpty() ? null : diasConFalta.get(0);
+                    int dias = 0;
+                    LocalDate anterior = null;
+                    for (LocalDate dia : diasConFalta) {
+                        // El fin de semana no corta la racha: viernes y lunes cuentan
+                        // como consecutivos (de ahí el margen de 3 días).
+                        if (dia.isAfter(fecha) || (anterior != null && anterior.minusDays(3).isBefore(dia))) {
+                            break;
+                        }
+                        dias++;
+                        anterior = dia;
+                        if (dias >= UMBRAL_FALTAS_CONSECUTIVAS) {
+                            break;
+                        }
+                    }
+                    return new RachaFaltas(dias, fin);
+                });
+    }
+
+    /** Resultado del conteo de la racha: cuántos días de falta y cuándo terminó. */
+    private record RachaFaltas(int diasFalta, LocalDate finRacha) { }
 
     private Mono<Void> notifyAttendance(Attendance attendance) {
         return notificationPort.notifyAbsenceOrLate(attendance)

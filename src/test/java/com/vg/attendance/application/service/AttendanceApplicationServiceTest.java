@@ -415,7 +415,8 @@ class AttendanceApplicationServiceTest {
         }
 
         @Override
-        public Mono<Void> notifyThreeFullAbsenceDays(String estudianteId, int absenceDays) {
+        public Mono<Void> notifyThreeFullAbsenceDays(String estudianteId, int absenceDays,
+                                                     java.time.LocalDate finRacha, String profesorId) {
             return Mono.empty();
         }
     }
