@@ -309,7 +309,7 @@ public class AttendanceApplicationService implements
     public Flux<AttendanceAuditResponse> getAuditByAttendanceId(Long attendanceId, String tenantId) {
         return attendanceRepository.findById(tenantId, attendanceId)
             .switchIfEmpty(Mono.error(new NotFoundException("Asistencia no encontrada con id: " + attendanceId)))
-            .thenMany(auditRepository.findByAttendanceId(attendanceId))
+            .thenMany(auditRepository.findByAttendanceId(tenantId, attendanceId))
             .map(this::toAuditResponse);
     }
     
@@ -530,6 +530,7 @@ public class AttendanceApplicationService implements
     private Mono<Void> saveAudit(Attendance previous, Attendance current, UpdateAttendanceCommand command, String action) {
         AttendanceAudit audit = AttendanceAudit.builder()
             .attendanceId(previous == null ? (current == null ? null : current.getId()) : previous.getId())
+            .institucionId(current == null ? null : current.getInstitucionId())
             .changedBy(command == null ? null : command.getChangedBy())
             .changedByRole(command == null ? null : command.getChangedByRole())
             .action(action)
@@ -551,6 +552,7 @@ public class AttendanceApplicationService implements
     private Mono<Void> saveCreateAudit(Attendance attendance, RegisterAttendanceCommand command) {
         AttendanceAudit audit = AttendanceAudit.builder()
             .attendanceId(attendance.getId())
+            .institucionId(attendance.getInstitucionId())
             .changedBy(command.getRegistradoPor())
             .changedByRole(command.getRegistradoPorRole())
             .action("CREATE")

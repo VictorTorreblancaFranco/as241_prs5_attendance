@@ -20,10 +20,11 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
         createAttendanceTable()
                 .then(createSessionTable())
                 .then(addSessionIdToAttendance())
-                .then(createSessionIndexes())
                 .then(backfillAttendanceSessions())
                 .then(createAuditTable())
                 .then(normalizeExistingAttendanceData())
+                // Las columnas de auditoría deben existir antes de crear sus índices.
+                .then(createSessionIndexes())
                 .then(createDuplicateProtectionIndex())
                 .doOnSuccess(ignored -> log.info("Attendance schema checks completed"))
                 // No se acepta tráfico con el esquema parcialmente actualizado.
@@ -156,6 +157,7 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                 CREATE TABLE IF NOT EXISTS asistencia_auditoria (
                     id BIGSERIAL PRIMARY KEY,
                     attendance_id BIGINT NOT NULL,
+                    institucion_id UUID,
                     changed_by VARCHAR(80),
                     changed_by_role VARCHAR(40),
                     action VARCHAR(30) NOT NULL,
@@ -181,6 +183,17 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                 WHERE estado <> 'T' AND hora_llegada IS NOT NULL
                 """)
                 .then()
+                .then(databaseClient.sql("""
+                    ALTER TABLE asistencia_auditoria
+                    ADD COLUMN IF NOT EXISTS institucion_id UUID
+                    """).then())
+                .then(databaseClient.sql("""
+                    UPDATE asistencia_auditoria audit
+                    SET institucion_id = attendance.institucion_id
+                    FROM asistencias attendance
+                    WHERE audit.attendance_id = attendance.id
+                      AND audit.institucion_id IS NULL
+                    """).then())
                 .then(databaseClient.sql("""
                         UPDATE asistencias
                         SET justificacion_nota = NULL,
@@ -245,6 +258,10 @@ public class AttendanceSchemaInitializer implements ApplicationRunner {
                 .then(databaseClient.sql("""
                         CREATE INDEX IF NOT EXISTS ix_auditoria_attendance_id_changed_at
                         ON asistencia_auditoria (attendance_id, changed_at DESC)
+                        """).then())
+                .then(databaseClient.sql("""
+                        CREATE INDEX IF NOT EXISTS ix_auditoria_tenant_attendance_id_changed_at
+                        ON asistencia_auditoria (institucion_id, attendance_id, changed_at DESC)
                         """).then())
                 ;
     }

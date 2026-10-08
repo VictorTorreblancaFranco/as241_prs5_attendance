@@ -150,7 +150,6 @@ public class AttendanceController {
         return findScheduleForClass(request.getProfesorId(), claseId, authHeader)
             .flatMap(schedule -> validateAcademicYear(schedule, request.getAnioLectivo(), request.getFecha()).thenReturn(schedule))
             .flatMap(schedule -> validateClassDay(schedule, request.getFecha()).thenReturn(schedule))
-            .flatMap(schedule -> validateRegistrationWindow(schedule, request.getFecha(), role).thenReturn(schedule))
             .flatMapMany(schedule -> enrollmentClient.getStudentsByGradeSectionYear(
                     schedule.getGradeId(),
                     schedule.getSectionId(),
@@ -167,12 +166,14 @@ public class AttendanceController {
     @GetMapping("/teacher/{teacherId}/today")
     public Flux<ScheduleResponse> getTeacherTodayClasses(
             @PathVariable String teacherId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
             @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
             @RequestHeader("X-User-Id") String userId,
             @RequestHeader(value = "X-User-Role", required = false) String role) {
         log.info("Obteniendo clases de hoy para profesor: {}", teacherId);
         validateTeacherAccess(teacherId, userId, role);
-        return scheduleClient.getTodayClassesByTeacher(teacherId, authHeader);
+        LocalDate requestedDate = fecha != null ? fecha : LocalDate.now(SCHOOL_ZONE);
+        return scheduleClient.getClassesByTeacherOnDate(teacherId, requestedDate, authHeader);
     }
     
     @GetMapping("/teacher/{teacherId}/schedule")
@@ -205,7 +206,21 @@ public class AttendanceController {
         // headers de confianza interna (X-Internal-Request/X-User-Role).
         String token = extractToken(authHeader);
         log.info("Obteniendo alumnos para grado: {}, sección: {}, año: {}", gradeId, sectionId, yearId);
-        return enrollmentClient.getStudentsByGradeSectionYear(gradeId, sectionId, yearId, token)
+        Mono<Void> teacherScope = canManageAnyTeacher(role)
+                ? Mono.empty()
+                : (userId == null || userId.isBlank())
+                    ? Mono.error(new ForbiddenException("No se pudo identificar al profesor autenticado"))
+                    : scheduleClient.getClassesByTeacher(userId, authHeader)
+                    .filter(schedule -> Objects.equals(schedule.getGradeId(), gradeId)
+                            && Objects.equals(schedule.getSectionId(), sectionId)
+                            && Objects.equals(schedule.getAcademicYearId(), yearId))
+                    .hasElements()
+                    .flatMap(allowed -> allowed
+                            ? Mono.empty()
+                            : Mono.error(new ForbiddenException(
+                                    "No puedes consultar alumnos de una sección que no tienes asignada")));
+
+        return teacherScope.thenMany(enrollmentClient.getStudentsByGradeSectionYear(gradeId, sectionId, yearId, token))
                 .filter(student -> student.getIsActive() == null || Boolean.TRUE.equals(student.getIsActive()))
                 .filter(student -> Objects.equals(student.getGradeId(), gradeId))
                 .filter(student -> Objects.equals(student.getSectionId(), sectionId))
@@ -316,10 +331,14 @@ public class AttendanceController {
                 .flatMapMany(attendances -> enrichAttendances(attendances, token));
     }
 
-    /** KPI del dashboard: agregado del día sin datos personales (sin filtro por rol). */
+    /** KPI del dashboard, siempre limitado a la institución y al rol autenticado. */
     @GetMapping("/stats/today")
-    public Mono<AttendanceDailyStatsResponse> getTodayStats() {        LocalDate today = LocalDate.now(SCHOOL_ZONE);
+    public Mono<AttendanceDailyStatsResponse> getTodayStats(
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
+        LocalDate today = LocalDate.now(SCHOOL_ZONE);
         return attendanceByDate(today)
+                .filterWhen(attendance -> canReadAttendance(attendance, userId, role))
                 .collectList()
                 .map(attendances -> {
                     int total = attendances.size();
@@ -349,19 +368,37 @@ public class AttendanceController {
     /** KPI del dashboard: registros de asistencia por día (actividad histórica). */
     @GetMapping("/stats/activity")
     public Flux<com.vg.attendance.application.port.in.dto.DailyActivityCount> getActivityStats(
-            @RequestParam(defaultValue = "84") int days) {
+            @RequestParam(defaultValue = "84") int days,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
         int safeDays = Math.max(7, Math.min(days, 365));
-        LocalDate since = LocalDate.now(SCHOOL_ZONE).minusDays(safeDays);
-        return dailyActivity(since);
+        LocalDate end = LocalDate.now(SCHOOL_ZONE);
+        LocalDate start = end.minusDays(safeDays - 1L);
+        return Flux.range(0, safeDays)
+                .concatMap(offset -> {
+                    LocalDate date = start.plusDays(offset);
+                    return attendanceByDate(date)
+                            .filterWhen(attendance -> canReadAttendance(attendance, userId, role))
+                            .count()
+                            .map(total -> new com.vg.attendance.application.port.in.dto.DailyActivityCount(date, total));
+                });
     }
 
     /** KPI del dashboard: flujo de ingreso por hora de llegada del día. */
     @GetMapping("/stats/hourly")
     public Flux<com.vg.attendance.application.port.in.dto.HourlyFlowCount> getHourlyFlowStats(
             @RequestParam(required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) {
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestHeader(value = "X-User-Id", required = false) String userId,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
         LocalDate day = fecha != null ? fecha : LocalDate.now(SCHOOL_ZONE);
-        return getUseCase.getHourlyFlow(day);
+        return attendanceByDate(day)
+                .filterWhen(attendance -> canReadAttendance(attendance, userId, role))
+                .filter(attendance -> attendance.getHoraLlegada() != null)
+                .groupBy(attendance -> attendance.getHoraLlegada().getHour())
+                .flatMap(group -> group.count()
+                        .map(total -> new com.vg.attendance.application.port.in.dto.HourlyFlowCount(group.key(), total)))
+                .sort(java.util.Comparator.comparingInt(com.vg.attendance.application.port.in.dto.HourlyFlowCount::hora));
     }
 
     @GetMapping("/student/{estudianteId}/summary")
@@ -465,9 +502,11 @@ public class AttendanceController {
                             .thenMany(enrichAttendances(ordered, token));
                     });
             });
-        return transactionalOperator == null
-            ? bulkOperation
-            : bulkOperation.as(transactionalOperator::transactional);
+        // Cada alumno es una unidad independiente. No envolvemos todo el lote
+        // en una sola transacción: si se corta la conexión o falla un elemento,
+        // los registros ya confirmados permanecen guardados y el reintento los
+        // reutiliza sin duplicarlos.
+        return bulkOperation;
     }
 
     /**
@@ -852,7 +891,6 @@ public class AttendanceController {
                 .switchIfEmpty(Mono.error(new BusinessException("La clase no existe o no pertenece al profesor indicado")))
                 .flatMap(schedule -> validateAcademicYear(schedule, request.getAnioLectivo(), request.getFecha()).thenReturn(schedule))
                 .flatMap(schedule -> validateClassDay(schedule, request.getFecha()).thenReturn(schedule))
-                .flatMap(schedule -> validateRegistrationWindow(schedule, request.getFecha(), null).thenReturn(schedule))
                 .flatMap(schedule -> {
                     applyLateTolerance(schedule, request);
                     return Mono.just(schedule);
@@ -912,21 +950,6 @@ public class AttendanceController {
         return year.getStartDate() != null && year.getEndDate() != null
                 && !date.isBefore(year.getStartDate())
                 && !date.isAfter(year.getEndDate());
-    }
-
-    private Mono<Void> validateRegistrationWindow(ScheduleResponse schedule, LocalDate attendanceDate, String role) {
-        if (canManageAttendanceMutation(role)) {
-            return Mono.empty();
-        }
-        if (schedule.getStartTime() == null || attendanceDate == null) {
-            return Mono.empty();
-        }
-
-        LocalDateTime deadline = attendanceDate.atTime(schedule.getStartTime()).plusMinutes(45);
-        if (LocalDateTime.now(SCHOOL_ZONE).isAfter(deadline)) {
-            return Mono.error(new BusinessException("No se puede registrar asistencia después de 45 minutos de iniciada la clase"));
-        }
-        return Mono.empty();
     }
 
     private Mono<ScheduleResponse> findScheduleForClass(String profesorId, String claseId, String authHeader) {

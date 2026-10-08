@@ -8,6 +8,7 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.relational.core.mapping.Table;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Data
 @Builder
@@ -20,6 +21,7 @@ public class AttendanceAudit {
     private Long id;
 
     private Long attendanceId;
+    private UUID institucionId;
     private String changedBy;
     private String changedByRole;
     private String action;

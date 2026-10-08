@@ -78,7 +78,9 @@ attendance:
     enabled: ${ATTENDANCE_RATE_LIMIT_ENABLED:true}
     requests-per-minute: ${ATTENDANCE_RATE_LIMIT_REQUESTS_PER_MINUTE:120}
   roster-cache:
-    ttl: ${ATTENDANCE_ROSTER_CACHE_TTL:5m}
+    # Attendance consulta el padrón actualizado en cada operación. Si se
+    # necesita caché temporal por capacidad, debe habilitarse explícitamente.
+    ttl: ${ATTENDANCE_ROSTER_CACHE_TTL:0s}
     maximum-size: ${ATTENDANCE_ROSTER_CACHE_MAXIMUM_SIZE:500}
 
 springdoc:

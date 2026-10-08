@@ -43,8 +43,8 @@ public class EnrollmentClient {
     // a caídas breves de ese servicio mientras el roster esté cacheado.
     private record RosterCacheEntry(List<EnrollmentResponse> students, long storedAt) {}
 
-    @Value("${attendance.roster-cache.ttl:5m}")
-    private Duration rosterTtl = Duration.ofMinutes(5);
+    @Value("${attendance.roster-cache.ttl:0s}")
+    private Duration rosterTtl = Duration.ZERO;
 
     @Value("${attendance.roster-cache.maximum-size:500}")
     private int rosterMaximumSize = 500;
@@ -70,8 +70,8 @@ public class EnrollmentClient {
         String key = rosterKey(tenantId, gradeId, sectionId, yearId);
 
         RosterCacheEntry cached = rosterCache.get(key);
-        long ttlMillis = Math.max(1L, rosterTtl.toMillis());
-        if (cached != null && System.currentTimeMillis() - cached.storedAt() < ttlMillis) {
+        long ttlMillis = Math.max(0L, rosterTtl.toMillis());
+        if (ttlMillis > 0 && cached != null && System.currentTimeMillis() - cached.storedAt() < ttlMillis) {
             log.info("Roster servido desde caché para tenant {}, grado {}, sección {}, año {} ({} alumnos)",
                     tenantId, gradeId, sectionId, yearId, cached.students().size());
             return Flux.fromIterable(cached.students());

@@ -42,11 +42,15 @@ public class ScheduleClient {
     }
 
     public Flux<ScheduleResponse> getTodayClassesByTeacher(String teacherId, String authHeader) {
-        log.info("Obteniendo clases de hoy para el profesor: {}", teacherId);
+        return getClassesByTeacherOnDate(teacherId, LocalDate.now(ZoneId.of("America/Lima")), authHeader);
+    }
+
+    public Flux<ScheduleResponse> getClassesByTeacherOnDate(String teacherId, LocalDate date, String authHeader) {
+        log.info("Obteniendo clases del {} para el profesor: {}", date, teacherId);
         return scheduleWebClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/schedules/teacher/{teacherId}")
-                        .queryParam("dayOfWeek", LocalDate.now(ZoneId.of("America/Lima")).getDayOfWeek())
+                        .queryParam("dayOfWeek", date.getDayOfWeek())
                         .queryParam("active", true)
                         .build(teacherId))
                 .header("X-Internal-Request", "gateway")

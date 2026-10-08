@@ -7,4 +7,8 @@ import reactor.core.publisher.Mono;
 public interface AttendanceAuditRepositoryPort {
     Mono<AttendanceAudit> save(AttendanceAudit audit);
     Flux<AttendanceAudit> findByAttendanceId(Long attendanceId);
+
+    default Flux<AttendanceAudit> findByAttendanceId(String tenantId, Long attendanceId) {
+        return findByAttendanceId(attendanceId);
+    }
 }
