@@ -13,6 +13,13 @@ internal-secret: ${INTERNAL_SECRET:${ATTENDANCE_INTERNAL_SECRET:edunova-internal
 spring:
   application:
     name: ${SPRING_APP_NAME:vg-ms-attendance}
+  # Ejecuta schema.sql al arrancar: sin esto una base nueva no tiene las tablas y
+  # el servicio no levanta. Es idempotente, asi que no afecta a bases ya migradas.
+  sql:
+    init:
+      mode: ${SQL_INIT_MODE:always}
+      schema-locations: classpath:schema.sql
+      continue-on-error: false
   r2dbc:
     url: ${DB_URL:r2dbc:postgresql://ep-spring-bird-b4g1sfn8-pooler.c-6.us-east-2.aws.neon.tech/attendance?sslMode=require&channelBinding=require}
     username: ${DB_USERNAME:neondb_owner}
