@@ -13,4 +13,5 @@ WORKDIR /app
 
 COPY --from=build /app/target/*.jar app.jar
 
-ENTRYPOINT ["java","-jar","app.jar"]
+ENV JAVA_OPTS="-Xms64m -Xmx128m -XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
