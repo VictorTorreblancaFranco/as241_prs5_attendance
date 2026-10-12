@@ -865,6 +865,11 @@ public class AttendanceController {
             return Mono.just(true);
         }
 
+        if ("PARENT".equals(normalizeRole(role))) {
+            return userClient.getChildrenByParentId(userId)
+                    .any(link -> attendance.getEstudianteId().equals(link.getStudentId()));
+        }
+
         return userClient.getGuardiansByStudentId(attendance.getEstudianteId())
             .any(link -> userId.equals(link.getParentId()));
     }

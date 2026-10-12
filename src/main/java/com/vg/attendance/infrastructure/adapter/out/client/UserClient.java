@@ -114,4 +114,15 @@ public class UserClient {
                 });
     }
 
+    /** Self-service: un apoderado puede consultar sus hijos, no los guardianes de terceros. */
+    public Flux<ParentStudentLinkResponse> getChildrenByParentId(String parentId) {
+        return userWebClient.get()
+                .uri("/api/users/parents/{id}/children", parentId)
+                .retrieve()
+                .bodyToFlux(ParentStudentLinkResponse.class)
+                .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
+                .transformDeferred(RetryOperator.of(retry))
+                .timeout(requestTimeout);
+    }
+
 }

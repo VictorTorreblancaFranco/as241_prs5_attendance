@@ -139,6 +139,35 @@ class AttendanceControllerTest {
             .build();
     }
 
+    @Test
+    void parentReadsChildAttendanceThroughOwnChildrenEndpoint() {
+        parentReadCheck("[{\"parentId\":\"parent-1\",\"studentId\":\"student-1\"}]", true);
+    }
+
+    @Test
+    void parentCannotReadAttendanceOfUnrelatedStudent() {
+        parentReadCheck("[{\"parentId\":\"parent-1\",\"studentId\":\"other-student\"}]", false);
+    }
+
+    private void parentReadCheck(String children, boolean allowed) {
+        var queriedPaths = new java.util.ArrayList<String>();
+        UserClient client = new UserClient(WebClient.builder().exchangeFunction(request -> {
+            queriedPaths.add(request.url().getPath());
+            if (request.url().getPath().equals("/api/users/parents/parent-1/children")) {
+                return Mono.just(ClientResponse.create(HttpStatus.OK)
+                        .header(HttpHeaders.CONTENT_TYPE, "application/json").body(children).build());
+            }
+            return Mono.just(ClientResponse.create(HttpStatus.NOT_FOUND).build());
+        }).build(), CircuitBreakerRegistry.ofDefaults(), RetryRegistry.ofDefaults());
+        controller = new AttendanceController(command -> Mono.empty(), getUseCase,
+                new FakeGetAttendanceAuditUseCase(), updateUseCase, new AttendanceWebMapper(), null, null, client);
+        var verifier = StepVerifier.create(controller.getAttendanceById(7L, null, "parent-1", "PARENT"));
+        if (allowed) verifier.expectNextCount(1).verifyComplete();
+        else verifier.expectError(ForbiddenException.class).verify();
+        assertThat(queriedPaths).contains("/api/users/parents/parent-1/children")
+                .doesNotContain("/api/users/students/student-1/guardians");
+    }
+
     private AttendanceResponse attendanceForAccess() {
         return AttendanceResponse.builder()
             .id(7L)

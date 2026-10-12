@@ -149,6 +149,10 @@ resilience4j:
         failure-rate-threshold: 50
         wait-duration-in-open-state: 10s
         permitted-number-of-calls-in-half-open-state: 3
+        # Una denegación de permisos no significa que users esté caído.
+        ignore-exceptions:
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Forbidden
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Unauthorized
       academicService:
         sliding-window-size: 10
         failure-rate-threshold: 50
@@ -165,6 +169,9 @@ resilience4j:
       userService:
         max-attempts: 3
         wait-duration: 1s
+        ignore-exceptions:
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Forbidden
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Unauthorized
       academicService:
         max-attempts: 3
         wait-duration: 1s
