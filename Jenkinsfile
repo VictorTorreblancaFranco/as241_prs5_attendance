@@ -19,6 +19,9 @@ pipeline {
         MAVEN_OPTS = '-Dmaven.repo.local=.m2/repository'
         ATTENDANCE_URL = "${env.ATTENDANCE_URL ?: 'http://localhost:5085'}"
         FRONTEND_URL = "${env.FRONTEND_URL ?: 'http://localhost:4200'}"
+        JMETER_HOST = "${env.JMETER_HOST ?: 'localhost'}"
+        JMETER_PORT = "${env.JMETER_PORT ?: '5085'}"
+        JMETER_DATE = "${env.JMETER_DATE ?: '2026-10-12'}"
         SLACK_CHANNEL = '#ci-attendance'
     }
 
@@ -68,9 +71,9 @@ pipeline {
             steps {
                 sh 'command -v jmeter >/dev/null'
                 sh 'mkdir -p target/jmeter'
-                sh 'jmeter -n -t qa/jmeter/attendance-verde.jmx -JbaseUrl="$ATTENDANCE_URL" -l target/jmeter/verde.jtl -e -o target/jmeter/verde-report'
-                sh 'jmeter -n -t qa/jmeter/attendance-amarillo.jmx -JbaseUrl="$ATTENDANCE_URL" -l target/jmeter/amarillo.jtl -e -o target/jmeter/amarillo-report'
-                sh 'jmeter -n -t qa/jmeter/attendance-rojo.jmx -JbaseUrl="$ATTENDANCE_URL" -l target/jmeter/rojo.jtl -e -o target/jmeter/rojo-report'
+                sh 'jmeter -n -t qa/jmeter/attendance-verde.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/verde.jtl -e -o target/jmeter/verde-report'
+                sh 'jmeter -n -t qa/jmeter/attendance-amarillo.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/amarillo.jtl -e -o target/jmeter/amarillo-report'
+                sh 'jmeter -n -t qa/jmeter/attendance-rojo.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/rojo.jtl -e -o target/jmeter/rojo-report'
             }
             post { always { archiveArtifacts allowEmptyArchive: true, artifacts: 'target/jmeter/**' } }
         }
