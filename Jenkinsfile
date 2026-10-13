@@ -16,9 +16,11 @@ pipeline {
 
     environment {
         MAVEN_OPTS = '-Dmaven.repo.local=.m2/repository'
-        ATTENDANCE_URL = "${env.ATTENDANCE_URL ?: 'http://localhost:5085'}"
-        FRONTEND_URL = "${env.FRONTEND_URL ?: 'http://localhost:4200'}"
-        JMETER_HOST = "${env.JMETER_HOST ?: 'localhost'}"
+        // Jenkins runs in Docker. The Angular dev server is on the host, while
+        // Attendance is reachable through the shared Docker network.
+        ATTENDANCE_URL = "${env.ATTENDANCE_URL ?: 'http://vg-ms-attendance:5085'}"
+        FRONTEND_URL = "${env.FRONTEND_URL ?: 'http://host.docker.internal:4200'}"
+        JMETER_HOST = "${env.JMETER_HOST ?: 'vg-ms-attendance'}"
         JMETER_PORT = "${env.JMETER_PORT ?: '5085'}"
         JMETER_DATE = "${env.JMETER_DATE ?: '2026-10-12'}"
         SLACK_CHANNEL = '#ci-attendance'
