@@ -62,7 +62,7 @@ pipeline {
             when { expression { params.RUN_E2E } }
             steps {
                 sh 'test -n "$FRONTEND_URL" && test -n "$ATTENDANCE_URL"'
-                sh './mvnw -B -ntp -Pfunctional -Dfrontend.url="$FRONTEND_URL" -Dattendance.url="$ATTENDANCE_URL" test'
+                sh './mvnw -B -ntp -Pfunctional -Dselenium.headless=true -Dfrontend.url="$FRONTEND_URL" -Dattendance.url="$ATTENDANCE_URL" test'
             }
             post { always { junit allowEmptyResults: true, testResults: 'target/surefire-reports/functional-*.xml' } }
         }
