@@ -23,6 +23,7 @@ pipeline {
         JMETER_HOST = "${env.JMETER_HOST ?: 'vg-ms-attendance'}"
         JMETER_PORT = "${env.JMETER_PORT ?: '5085'}"
         JMETER_DATE = "${env.JMETER_DATE ?: '2026-10-12'}"
+        JMETER_BIN = '/opt/apache-jmeter-5.6.3/bin/jmeter'
         SLACK_CHANNEL = '#ci-attendance'
     }
 
@@ -70,13 +71,13 @@ pipeline {
         stage('JMeter load tests') {
             when { expression { params.RUN_JMETER } }
             steps {
-                sh 'command -v jmeter >/dev/null'
+                sh 'test -x "$JMETER_BIN"'
                 sh 'mkdir -p target/jmeter'
                 // Jenkins uses the distro JMeter 2.13, which supports JTL logs
                 // but not the HTML report flags introduced in later versions.
-                sh 'jmeter -n -t qa/jmeter/attendance-verde.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/verde.jtl -j target/jmeter/verde.log'
-                sh 'jmeter -n -t qa/jmeter/attendance-amarillo.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/amarillo.jtl -j target/jmeter/amarillo.log'
-                sh 'jmeter -n -t qa/jmeter/attendance-rojo.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/rojo.jtl -j target/jmeter/rojo.log'
+                sh '"$JMETER_BIN" -n -t qa/jmeter/attendance-verde.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/verde.jtl -j target/jmeter/verde.log'
+                sh '"$JMETER_BIN" -n -t qa/jmeter/attendance-amarillo.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/amarillo.jtl -j target/jmeter/amarillo.log'
+                sh '"$JMETER_BIN" -n -t qa/jmeter/attendance-rojo.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/rojo.jtl -j target/jmeter/rojo.log'
                 sh '''
                     printf 'Escenario\tMuestras\tErrores\tErrorPct\tPromedioMs\tMinMs\tMaxMs\n' > target/jmeter/resumen.tsv
                     for escenario in verde amarillo rojo; do
