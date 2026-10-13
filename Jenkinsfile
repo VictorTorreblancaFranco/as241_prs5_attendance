@@ -72,9 +72,17 @@ pipeline {
             steps {
                 sh 'command -v jmeter >/dev/null'
                 sh 'mkdir -p target/jmeter'
-                sh 'jmeter -n -t qa/jmeter/attendance-verde.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/verde.jtl -e -o target/jmeter/verde-report'
-                sh 'jmeter -n -t qa/jmeter/attendance-amarillo.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/amarillo.jtl -e -o target/jmeter/amarillo-report'
-                sh 'jmeter -n -t qa/jmeter/attendance-rojo.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/rojo.jtl -e -o target/jmeter/rojo-report'
+                // Jenkins uses the distro JMeter 2.13, which supports JTL logs
+                // but not the HTML report flags introduced in later versions.
+                sh 'jmeter -n -t qa/jmeter/attendance-verde.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/verde.jtl -j target/jmeter/verde.log'
+                sh 'jmeter -n -t qa/jmeter/attendance-amarillo.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/amarillo.jtl -j target/jmeter/amarillo.log'
+                sh 'jmeter -n -t qa/jmeter/attendance-rojo.jmx -Jhost="$JMETER_HOST" -Jport="$JMETER_PORT" -Jfecha="$JMETER_DATE" -l target/jmeter/rojo.jtl -j target/jmeter/rojo.log'
+                sh '''
+                    printf 'Escenario\tMuestras\tErrores\tErrorPct\tPromedioMs\tMinMs\tMaxMs\n' > target/jmeter/resumen.tsv
+                    for escenario in verde amarillo rojo; do
+                      awk -F, -v nombre="$escenario" 'NR > 1 { total++; if ($8 == "false") errores++; suma += $2; if (min == "" || $2 < min) min = $2; if ($2 > max) max = $2 } END { if (total == "") total=0; if (errores == "") errores=0; pct=(total ? errores*100/total : 0); promedio=(total ? suma/total : 0); printf "%s\\t%d\\t%d\\t%.2f\\t%.2f\\t%d\\t%d\\n", nombre,total,errores,pct,promedio,min+0,max+0 }' target/jmeter/$escenario.jtl >> target/jmeter/resumen.tsv
+                    done
+                '''
             }
             post { always { archiveArtifacts allowEmptyArchive: true, artifacts: 'target/jmeter/**' } }
         }
