@@ -19,4 +19,5 @@ public class UpdateAttendanceCommand {
     private String motivoCambio;
     private String changedBy;
     private String changedByRole;
+    private boolean skipNotifications;
 }

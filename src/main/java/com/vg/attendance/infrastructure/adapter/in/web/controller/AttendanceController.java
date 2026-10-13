@@ -148,6 +148,7 @@ public class AttendanceController {
         String operationKey = normalizeIdempotencyKey(idempotencyKey);
 
         return findScheduleForClass(request.getProfesorId(), claseId, authHeader)
+            .flatMap(this::validateScheduleTimes)
             .flatMap(schedule -> validateAcademicYear(schedule, request.getAnioLectivo(), request.getFecha()).thenReturn(schedule))
             .flatMap(schedule -> validateClassDay(schedule, request.getFecha()).thenReturn(schedule))
             .flatMapMany(schedule -> enrollmentClient.getStudentsByGradeSectionYear(
@@ -485,8 +486,10 @@ public class AttendanceController {
                     .collectMap(AttendanceResponse::getEstudianteId);
 
                 Mono<Map<String, AttendanceResponse>> updatedRecords = Flux.fromIterable(existingItems)
-                    .concatMap(item -> saveBulkItem(claseId, request, userId, role,
-                        existing.get(item.getEstudianteId()), item, idempotencyKey))
+                    // Cada estudiante es independiente; limitar la concurrencia
+                    // evita saturar la base remota durante un lote.
+                    .flatMapSequential(item -> saveBulkItem(claseId, request, userId, role,
+                        existing.get(item.getEstudianteId()), item, idempotencyKey), 6)
                     .collectMap(AttendanceResponse::getEstudianteId);
 
                 return Mono.zip(newRecords, updatedRecords)
@@ -499,7 +502,10 @@ public class AttendanceController {
                             .toList();
                         return registerUseCase
                             .refreshSessionCounters(claseId, request.getFecha(), students.size(), userId)
-                            .thenMany(enrichAttendances(ordered, token));
+                            // La pantalla ya tiene los nombres desde el roster.
+                            // No hagamos 70 consultas adicionales a User antes
+                            // de devolver un lote que ya quedó persistido.
+                            .thenMany(Flux.fromIterable(ordered));
                     });
             });
         // Cada alumno es una unidad independiente. No envolvemos todo el lote
@@ -578,7 +584,12 @@ public class AttendanceController {
             .motivoCambio(item.getMotivoCambio())
             .changedBy(userId)
             .changedByRole(role)
+            .skipNotifications(true)
             .build();
+
+        if (hasSameAttendanceState(existing, item)) {
+            return Mono.just(existing);
+        }
         return updateUseCase.updateAttendance(existing.getId(), command);
     }
 
@@ -602,8 +613,18 @@ public class AttendanceController {
             .justificacionFotoUrl(item.getJustificacionFotoUrl())
             .totalEstudiantesSesion(request.getAsistencias().size())
             .idempotencyKey(idempotencyKey)
+            .skipDuplicateCheck(true)
             .skipSessionCounterUpdate(true)
+            .skipNotifications(true)
             .build();
+    }
+
+    private boolean hasSameAttendanceState(AttendanceResponse existing, AttendanceBulkItemRequest item) {
+        String status = item.getEstado() == null ? null : item.getEstado().trim().toUpperCase(Locale.ROOT);
+        return Objects.equals(existing.getEstado(), status)
+            && Objects.equals(existing.getHoraLlegada(), item.getHoraLlegada())
+            && Objects.equals(existing.getJustificacionNota(), item.getJustificacionNota())
+            && Objects.equals(existing.getJustificacionFotoUrl(), item.getJustificacionFotoUrl());
     }
 
     private Mono<AttendanceResponse> findExistingBulkAttendance(String claseId, LocalDate fecha, String estudianteId) {
@@ -894,6 +915,7 @@ public class AttendanceController {
                 .filter(schedule -> Objects.equals(schedule.getId(), classId))
                 .next()
                 .switchIfEmpty(Mono.error(new BusinessException("La clase no existe o no pertenece al profesor indicado")))
+                .flatMap(this::validateScheduleTimes)
                 .flatMap(schedule -> validateAcademicYear(schedule, request.getAnioLectivo(), request.getFecha()).thenReturn(schedule))
                 .flatMap(schedule -> validateClassDay(schedule, request.getFecha()).thenReturn(schedule))
                 .flatMap(schedule -> {
@@ -965,6 +987,18 @@ public class AttendanceController {
             .switchIfEmpty(Mono.error(new BusinessException("La clase no existe o no pertenece al profesor indicado")));
     }
 
+    private Mono<ScheduleResponse> validateScheduleTimes(ScheduleResponse schedule) {
+        if (schedule.getStartTime() == null || schedule.getEndTime() == null) {
+            return Mono.error(new BusinessException(
+                "La clase no tiene un horario completo; configure la hora de inicio y fin"));
+        }
+        if (!schedule.getStartTime().isBefore(schedule.getEndTime())) {
+            return Mono.error(new BusinessException(
+                "El horario de la clase es inválido: la hora de inicio debe ser anterior a la hora de fin"));
+        }
+        return Mono.just(schedule);
+    }
+
     private Mono<Void> validateLateArrivalForUpdate(AttendanceResponse attendance,
                                                     AttendanceUpdateRequest request,
                                                     String authHeader) {
@@ -974,6 +1008,7 @@ public class AttendanceController {
         }
 
         return findScheduleForClass(attendance.getProfesorId(), attendance.getClaseId(), authHeader)
+            .flatMap(this::validateScheduleTimes)
             .doOnNext(schedule -> applyLateTolerance(
                 schedule,
                 request,

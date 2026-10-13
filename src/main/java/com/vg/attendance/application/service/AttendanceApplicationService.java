@@ -50,7 +50,7 @@ public class AttendanceApplicationService implements
         UpdateAttendanceUseCase {
 
     private static final ZoneId SCHOOL_ZONE = ZoneId.of("America/Lima");
-    private static final int BULK_PERSISTENCE_CONCURRENCY = 6;
+    private static final int BULK_PERSISTENCE_CONCURRENCY = 8;
 
     /** Días de falta seguidos que activan el aviso a la familia. */
     private static final int UMBRAL_FALTAS_CONSECUTIVAS = 3;
@@ -116,16 +116,18 @@ public class AttendanceApplicationService implements
                     .flatMapSequential(command -> registerNewAttendance(command, session),
                             BULK_PERSISTENCE_CONCURRENCY)
                     .collectList()
-                    .flatMap(saved -> notifyBulk(saved)
-                        .then(avisarRachasDeFaltas(saved))
-                        .thenReturn(saved)));
+                    .flatMap(saved -> commandNotificationsEnabled(commands)
+                        ? notifyBulk(saved).then(avisarRachasDeFaltas(saved)).thenReturn(saved)
+                        : Mono.just(saved)));
         }).flatMapMany(Flux::fromIterable)
           .map(this::toResponse);
     }
 
     private Mono<Attendance> registerNewAttendance(RegisterAttendanceCommand command,
                                                     AttendanceSession session) {
-        Mono<Boolean> duplicate = command.getInstitucionId() == null
+        Mono<Boolean> duplicate = command.isSkipDuplicateCheck()
+            ? Mono.just(false)
+            : command.getInstitucionId() == null
             ? attendanceRepository.existsByEstudianteIdAndClaseIdAndFecha(
                 command.getEstudianteId(), command.getClaseId(), command.getFecha())
             : attendanceRepository.existsByEstudianteIdAndClaseIdAndFecha(
@@ -210,10 +212,14 @@ public class AttendanceApplicationService implements
                     .flatMap(attendanceRepository::save)
                     .flatMap(saved -> saveAudit(previous, saved, command, "UPDATE").thenReturn(saved));
             })
-            .flatMap(saved -> notifyAttendance(saved)
-                .then(avisarRachaDeFaltas(saved))
-                .thenReturn(saved))
+            .flatMap(saved -> command.isSkipNotifications()
+                ? Mono.just(saved)
+                : notifyAttendance(saved).then(avisarRachaDeFaltas(saved)).thenReturn(saved))
             .map(this::toResponse);
+    }
+
+    private boolean commandNotificationsEnabled(List<RegisterAttendanceCommand> commands) {
+        return commands.stream().anyMatch(command -> !command.isSkipNotifications());
     }
     
     @Override

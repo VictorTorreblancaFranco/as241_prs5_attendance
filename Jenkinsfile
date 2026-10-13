@@ -1,0 +1,84 @@
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        ansiColor('xterm')
+        skipDefaultCheckout(true)
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '15'))
+    }
+
+    parameters {
+        booleanParam(name: 'RUN_SONAR', defaultValue: true, description: 'Ejecuta el analisis en SonarQube/SonarCloud')
+        booleanParam(name: 'RUN_E2E', defaultValue: false, description: 'Ejecuta Selenium contra el frontend y Attendance levantados')
+        booleanParam(name: 'RUN_JMETER', defaultValue: false, description: 'Ejecuta los tres planes JMeter')
+    }
+
+    environment {
+        MAVEN_OPTS = '-Dmaven.repo.local=.m2/repository'
+        ATTENDANCE_URL = "${env.ATTENDANCE_URL ?: 'http://localhost:5085'}"
+        FRONTEND_URL = "${env.FRONTEND_URL ?: 'http://localhost:4200'}"
+        SLACK_CHANNEL = '#ci-attendance'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps { checkout scm }
+        }
+
+        stage('Compile') {
+            steps { sh './mvnw -B -ntp -DskipTests compile' }
+        }
+
+        stage('Unit tests') {
+            steps {
+                sh './mvnw -B -ntp clean test'
+            }
+            post {
+                always {
+                    junit allowEmptyResults: false, testResults: 'target/surefire-reports/*.xml'
+                    jacoco execPattern: 'target/jacoco.exec', classPattern: 'target/classes', sourcePattern: 'src/main/java'
+                }
+            }
+        }
+
+        stage('SonarQube') {
+            when { expression { params.RUN_SONAR } }
+            steps {
+                withCredentials([string(credentialsId: 'sonarcloud-attendance-token', variable: 'SONAR_TOKEN')]) {
+                    withSonarQubeEnv('SonarCloud') {
+                        sh './mvnw -B -ntp verify sonar:sonar -Dsonar.token="$SONAR_TOKEN"'
+                    }
+                }
+            }
+        }
+
+        stage('Selenium functional tests') {
+            when { expression { params.RUN_E2E } }
+            steps {
+                sh 'test -n "$FRONTEND_URL" && test -n "$ATTENDANCE_URL"'
+                sh './mvnw -B -ntp -Pfunctional -Dfrontend.url="$FRONTEND_URL" -Dattendance.url="$ATTENDANCE_URL" test'
+            }
+            post { always { junit allowEmptyResults: true, testResults: 'target/surefire-reports/functional-*.xml' } }
+        }
+
+        stage('JMeter load tests') {
+            when { expression { params.RUN_JMETER } }
+            steps {
+                sh 'command -v jmeter >/dev/null'
+                sh 'mkdir -p target/jmeter'
+                sh 'jmeter -n -t qa/jmeter/attendance-verde.jmx -JbaseUrl="$ATTENDANCE_URL" -l target/jmeter/verde.jtl -e -o target/jmeter/verde-report'
+                sh 'jmeter -n -t qa/jmeter/attendance-amarillo.jmx -JbaseUrl="$ATTENDANCE_URL" -l target/jmeter/amarillo.jtl -e -o target/jmeter/amarillo-report'
+                sh 'jmeter -n -t qa/jmeter/attendance-rojo.jmx -JbaseUrl="$ATTENDANCE_URL" -l target/jmeter/rojo.jtl -e -o target/jmeter/rojo-report'
+            }
+            post { always { archiveArtifacts allowEmptyArchive: true, artifacts: 'target/jmeter/**' } }
+        }
+    }
+
+    post {
+        success { slackSend(channel: env.SLACK_CHANNEL, color: 'good', message: "Attendance #${env.BUILD_NUMBER}: pipeline EXITOSO - ${env.BUILD_URL}") }
+        failure { slackSend(channel: env.SLACK_CHANNEL, color: 'danger', message: "Attendance #${env.BUILD_NUMBER}: pipeline FALLIDO - ${env.BUILD_URL}") }
+        unstable { slackSend(channel: env.SLACK_CHANNEL, color: 'warning', message: "Attendance #${env.BUILD_NUMBER}: pipeline INESTABLE - ${env.BUILD_URL}") }
+    }
+}

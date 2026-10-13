@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
@@ -47,13 +48,14 @@ public class ScheduleClient {
 
     public Flux<ScheduleResponse> getClassesByTeacherOnDate(String teacherId, LocalDate date, String authHeader) {
         log.info("Obteniendo clases del {} para el profesor: {}", date, teacherId);
-        return scheduleWebClient.get()
+        WebClient.RequestHeadersSpec<?> request = scheduleWebClient.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/schedules/teacher/{teacherId}")
                         .queryParam("dayOfWeek", date.getDayOfWeek())
                         .queryParam("active", true)
                         .build(teacherId))
-                .header("X-Internal-Request", "gateway")
+                .header("X-Internal-Request", "gateway");
+        return withCallerAuthorization(request, authHeader)
                 .retrieve()
                 .bodyToFlux(ScheduleResponse.class)
                 .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
@@ -64,15 +66,33 @@ public class ScheduleClient {
 
     public Flux<ScheduleResponse> getClassesByTeacher(String teacherId, String authHeader) {
         log.info("Obteniendo todas las clases del profesor: {}", teacherId);
-        return scheduleWebClient.get()
+        WebClient.RequestHeadersSpec<?> request = scheduleWebClient.get()
                 .uri("/schedules/teacher/{teacherId}", teacherId)
-                .header("X-Internal-Request", "gateway")
+                .header("X-Internal-Request", "gateway");
+        return withCallerAuthorization(request, authHeader)
                 .retrieve()
                 .bodyToFlux(ScheduleResponse.class)
                 .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
                 .transformDeferred(RetryOperator.of(retry))
                 .timeout(requestTimeout)
                 .onErrorMap(this::scheduleUnavailable);
+    }
+
+    /**
+     * Attendance consulta Schedule directamente, no a través del Gateway.
+     * Cuando existe una sesión del usuario, el token debe llegar a Schedule
+     * para que pueda validar sus roles y la institución del tenant.
+     */
+    private WebClient.RequestHeadersSpec<?> withCallerAuthorization(
+            WebClient.RequestHeadersSpec<?> request,
+            String authHeader) {
+        if (authHeader == null || authHeader.isBlank()) {
+            return request;
+        }
+        return request.headers(headers -> {
+            headers.remove("X-Internal-Request");
+            headers.set(HttpHeaders.AUTHORIZATION, authHeader);
+        });
     }
 
     private ServiceUnavailableException scheduleUnavailable(Throwable error) {

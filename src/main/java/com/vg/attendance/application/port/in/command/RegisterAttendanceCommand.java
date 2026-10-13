@@ -28,5 +28,8 @@ public class RegisterAttendanceCommand {
     private String justificacionNota;
     private String justificacionFotoUrl;
     private UUID institucionId;
+    /** The bulk controller already loaded the class roster before splitting new/existing rows. */
+    private boolean skipDuplicateCheck;
     private boolean skipSessionCounterUpdate;
+    private boolean skipNotifications;
 }

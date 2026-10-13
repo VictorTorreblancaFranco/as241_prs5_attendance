@@ -23,6 +23,8 @@ public class GatewayTrustWebFilter implements WebFilter {
     public static final String TENANT_CONTEXT_KEY = "attendance.tenantId";
     public static final String USER_ID_CONTEXT_KEY = "attendance.userId";
     public static final String USER_ROLE_CONTEXT_KEY = "attendance.userRole";
+    public static final String USER_EMAIL_CONTEXT_KEY = "attendance.userEmail";
+    public static final String AUTHORIZATION_CONTEXT_KEY = "attendance.authorization";
     private static final Set<String> GLOBAL_ROLES = Set.of(
             "ADMIN", "DEVELOPER", "DIRECTOR", "COORDINATOR", "COORDINADOR", "SECRETARY", "SECRETARIA");
 
@@ -80,7 +82,12 @@ public class GatewayTrustWebFilter implements WebFilter {
                                    String role,
                                    UsernamePasswordAuthenticationToken authentication) {
         Context updated = context;
+        String authorization = exchange.getRequest().getHeaders().getFirst("Authorization");
+        if (authorization != null && !authorization.isBlank()) {
+            updated = updated.put(AUTHORIZATION_CONTEXT_KEY, authorization);
+        }
         String tenantId = exchange.getRequest().getHeaders().getFirst("X-Tenant-Id");
+        String userEmail = exchange.getRequest().getHeaders().getFirst("X-User-Email");
         if (tenantId != null && !tenantId.isBlank()) {
             updated = updated.put(TENANT_CONTEXT_KEY, tenantId);
         }
@@ -89,6 +96,9 @@ public class GatewayTrustWebFilter implements WebFilter {
         }
         if (role != null && !role.isBlank()) {
             updated = updated.put(USER_ROLE_CONTEXT_KEY, role);
+        }
+        if (userEmail != null && !userEmail.isBlank()) {
+            updated = updated.put(USER_EMAIL_CONTEXT_KEY, userEmail);
         }
         return authentication == null
                 ? updated

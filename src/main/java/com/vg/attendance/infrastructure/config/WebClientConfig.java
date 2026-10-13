@@ -48,6 +48,8 @@ public class WebClientConfig {
             replaceHeader(builder, "X-Tenant-Id", context, GatewayTrustWebFilter.TENANT_CONTEXT_KEY);
             replaceHeader(builder, "X-User-Id", context, GatewayTrustWebFilter.USER_ID_CONTEXT_KEY);
             replaceHeader(builder, "X-User-Role", context, GatewayTrustWebFilter.USER_ROLE_CONTEXT_KEY);
+            replaceHeader(builder, "X-User-Email", context, GatewayTrustWebFilter.USER_EMAIL_CONTEXT_KEY);
+            replaceHeader(builder, "Authorization", context, GatewayTrustWebFilter.AUTHORIZATION_CONTEXT_KEY);
             return next.exchange(builder.build());
         });
     }
