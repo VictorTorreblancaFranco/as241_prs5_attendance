@@ -10,9 +10,9 @@ produccion: las pruebas deben apuntar a un entorno local o de QA.
 - [x] Cobertura JaCoCo (`target/site/jacoco/jacoco.xml`).
 - [x] Analisis SonarQube/SonarCloud preparado.
 - [x] Tres escenarios JMeter: verde, amarillo y rojo.
-- [x] Tres pruebas funcionales Selenium preparadas.
+- [x] Dos pruebas funcionales Selenium ejecutadas en Jenkins.
 - [x] Notificacion Slack preparada en el `post` del pipeline.
-- [ ] Ejecutar el pipeline en Jenkins con las credenciales reales.
+- [x] Pipeline completo ejecutado en Jenkins con SonarQube, Selenium, JMeter y Slack.
 - [ ] Adjuntar capturas de Jenkins, SonarQube, JMeter y Slack.
 - [ ] Grabar el video de 8 a 10 minutos.
 
@@ -49,14 +49,15 @@ Ejecucion completa en QA:
 RUN_SONAR=true
 RUN_E2E=true
 RUN_JMETER=true
-FRONTEND_URL=http://localhost:4200
-ATTENDANCE_URL=http://localhost:5085
+FRONTEND_URL=http://192.168.100.169:4200
+ATTENDANCE_URL=http://vg-ms-attendance:5085
 JMETER_DATE=2026-10-12
 ```
 
-Para Selenium deben estar levantados frontend y backend, y el entorno de
-prueba debe permitir una sesion autenticada. Para JMeter debe estar instalado
-`jmeter` en el agente Jenkins.
+Para Selenium deben estar levantados frontend y backend. Los dos casos
+automatizados son: carga del formulario de inicio de sesion y redireccion de
+la ruta protegida `/attendance` cuando no existe una sesion. Jenkins usa
+JMeter 5.6.3 en `/opt/apache-jmeter-5.6.3/bin/jmeter`.
 
 ## Evidencias que se deben capturar
 
@@ -83,11 +84,23 @@ produccion.
 | Amarillo | 25 | 180 s | Carga media |
 | Rojo | 75 | 300 s | Saturacion controlada |
 
+Resultados de Jenkins #16 sobre `GET /api/attendance/date`:
+
+| Escenario | Muestras | Promedio | P90 | P95 | Maximo | Errores |
+|---|---:|---:|---:|---:|---:|---:|
+| Verde | 1,617,633 | 0.16 ms | 1 ms | 1 ms | 333 ms | 100% (`401`) |
+| Amarillo | 5,310,921 | 0.77 ms | 2 ms | 2 ms | 42 ms | 100% (`401`) |
+| Rojo | 7,362,902 | 2.74 ms | 6 ms | 8 ms | 125 ms | 100% (`401`) |
+
+La tasa de error confirma que el endpoint rechaza peticiones sin autenticacion.
+Para medir el flujo de negocio exitoso se debe agregar al plan un token de QA
+no expuesto en Git.
+
 ### Selenium
 
 Documentar dos casos como minimo con funcionalidad, pasos, resultado esperado,
-resultado obtenido y captura. Los casos preparados verifican la carga de
-Attendance, los filtros/clase/estudiantes y el flujo de registro masivo.
+resultado obtenido y captura. Los casos ejecutados verifican la carga del
+formulario de inicio de sesion y la proteccion de la ruta de Attendance.
 
 ## Guion breve para el video
 
