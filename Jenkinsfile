@@ -79,8 +79,8 @@ pipeline {
     }
 
     post {
-        success { slackSend(channel: env.SLACK_CHANNEL, color: 'good', message: "Attendance #${env.BUILD_NUMBER}: pipeline EXITOSO - ${env.BUILD_URL}") }
-        failure { slackSend(channel: env.SLACK_CHANNEL, color: 'danger', message: "Attendance #${env.BUILD_NUMBER}: pipeline FALLIDO - ${env.BUILD_URL}") }
-        unstable { slackSend(channel: env.SLACK_CHANNEL, color: 'warning', message: "Attendance #${env.BUILD_NUMBER}: pipeline INESTABLE - ${env.BUILD_URL}") }
+        success { slackSend(tokenCredentialId: 'slack-attendance-token', channel: env.SLACK_CHANNEL, color: 'good', message: "Attendance #${env.BUILD_NUMBER}: pipeline EXITOSO - ${env.BUILD_URL}") }
+        failure { slackSend(tokenCredentialId: 'slack-attendance-token', channel: env.SLACK_CHANNEL, color: 'danger', message: "Attendance #${env.BUILD_NUMBER}: pipeline FALLIDO - ${env.BUILD_URL}") }
+        unstable { slackSend(tokenCredentialId: 'slack-attendance-token', channel: env.SLACK_CHANNEL, color: 'warning', message: "Attendance #${env.BUILD_NUMBER}: pipeline INESTABLE - ${env.BUILD_URL}") }
     }
 }
