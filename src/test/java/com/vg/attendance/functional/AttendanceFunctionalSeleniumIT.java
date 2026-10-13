@@ -26,7 +26,8 @@ class AttendanceFunctionalSeleniumIT {
         if (Boolean.parseBoolean(System.getProperty("selenium.headless", "true"))) {
             options.addArguments("--headless=new");
         }
-        options.addArguments("--no-sandbox", "--disable-dev-shm-usage", "--window-size=1440,1000");
+        options.addArguments("--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+                "--no-zygote", "--window-size=1440,1000");
         driver = new ChromeDriver(options);
         wait = new WebDriverWait(driver, Duration.ofSeconds(20));
     }
