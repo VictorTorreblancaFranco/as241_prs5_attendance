@@ -50,7 +50,7 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'sonarcloud-attendance-token', variable: 'SONAR_TOKEN')]) {
                     withSonarQubeEnv('SonarCloud') {
-                        sh './mvnw -B -ntp verify org.sonarsource.scanner.maven:sonar-maven-plugin:5.1.0.4751:sonar -Dsonar.token="$SONAR_TOKEN" -Dsonar.projectKey=VictorTorreblancaFranco_as241_prs5_attendance -Dsonar.organization=victortorreblancafranco -Dsonar.host.url=https://sonarcloud.io'
+        sh './mvnw -B -ntp verify org.sonarsource.scanner.maven:sonar-maven-plugin:5.1.0.4751:sonar -Dsonar.token="$SONAR_TOKEN" -Dsonar.projectKey=VictorTorreblancaFranco_as241_prs5_attendance -Dsonar.organization=victortorreblancafranco -Dsonar.host.url=https://sonarcloud.io -Dsonar.scanner.skipJreProvisioning=true'
                     }
                 }
             }
