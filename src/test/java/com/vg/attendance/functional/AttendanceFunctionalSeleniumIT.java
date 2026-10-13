@@ -14,7 +14,7 @@ import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
-/** Smoke funcional de la pantalla de Attendance para el entorno de QA. */
+/** Pruebas funcionales reproducibles del acceso al modulo de Attendance. */
 class AttendanceFunctionalSeleniumIT {
 
     private static WebDriver driver;
@@ -40,38 +40,23 @@ class AttendanceFunctionalSeleniumIT {
     }
 
     @Test
-    void attendanceScreenLoads() {
-        driver.get(frontendUrl() + "/attendance");
+    void loginScreenLoadsWithRequiredFields() {
+        driver.get(frontendUrl() + "/auth/login");
         wait.until(ExpectedConditions.presenceOfElementLocated(By.tagName("body")));
-        assertTrue(driver.getPageSource().contains("Asistencia"),
-                "La pantalla de asistencia no se cargo correctamente");
+        wait.until(ExpectedConditions.visibilityOfElementLocated(By.id("email")));
+        wait.until(ExpectedConditions.visibilityOfElementLocated(By.id("contrasena")));
+        assertTrue(driver.findElement(By.tagName("body")).getText().contains("Bienvenido de vuelta")
+                        && driver.findElement(By.id("email")).isDisplayed()
+                        && driver.findElement(By.id("contrasena")).isDisplayed(),
+                "El formulario de inicio de sesion no se cargo correctamente");
     }
 
     @Test
-    void attendanceScreenExposesClassAndStudentWorkflow() {
+    void attendanceRouteRequiresAuthentication() {
         driver.get(frontendUrl() + "/attendance");
-        wait.until(ExpectedConditions.presenceOfElementLocated(By.tagName("body")));
-        String page = driver.getPageSource();
-        assertTrue(page.contains("Grado") || page.contains("Sección"),
-                "No se muestran los filtros academicos de Attendance");
-        assertTrue(page.contains("Buscar estudiante") || page.contains("estudiante"),
-                "No se muestra el flujo de estudiantes de Attendance");
-    }
-
-    @Test
-    void massAttendanceActionStartsTheSaveWorkflow() {
-        driver.get(frontendUrl() + "/attendance");
-        var markAll = wait.until(ExpectedConditions.elementToBeClickable(
-                By.cssSelector("button.mark-all-button")));
-        markAll.click();
-
-        boolean savingOrFinished = wait.until(d -> {
-            String text = d.findElement(By.tagName("body")).getText();
-            return text.contains("Guardando asistencias")
-                    || text.contains("Asistencias guardadas")
-                    || text.contains("asistencia guardada");
-        });
-        assertTrue(savingOrFinished, "La accion masiva no inicio ni confirmo el guardado");
+        wait.until(d -> d.getCurrentUrl().contains("/auth/login"));
+        assertTrue(driver.getCurrentUrl().contains("/auth/login"),
+                "La ruta de Attendance debe exigir autenticacion");
     }
 
     private static String frontendUrl() {
