@@ -12,7 +12,7 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.vg</groupId>
+    <groupId>pe.edu.vallegrande.edunova</groupId>
     <artifactId>vg-ms-attendance</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>vg-ms-attendance</name>

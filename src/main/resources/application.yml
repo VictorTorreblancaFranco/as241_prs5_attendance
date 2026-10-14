@@ -44,7 +44,7 @@ spring:
 logging:
   level:
     root: ${LOG_ROOT_LEVEL:INFO}
-    com.vg.attendance: ${LOG_ATTENDANCE_LEVEL:DEBUG}
+    pe.edu.vallegrande.edunova.attendance: ${LOG_ATTENDANCE_LEVEL:DEBUG}
     org.springframework.r2dbc: ${LOG_R2DBC_LEVEL:INFO}
     io.r2dbc.postgresql: ${LOG_POSTGRESQL_LEVEL:INFO}
   pattern:
